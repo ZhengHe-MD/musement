@@ -321,11 +321,17 @@ function validateEditorialResponse(
       slot.status === "filled" ? [normalizeKey(slot.discovery_key)] : [],
     ),
   );
+  const filledSelectionTitles = response.slots.flatMap((slot) =>
+    slot.status === "filled" ? [slot.title] : [],
+  );
   for (const slot of response.slots) {
     if (slot.status === "unavailable") {
       const justifiedCandidate = response.candidate_assessments.find(
         (assessment) =>
           !selectedDiscoveryKeys.has(normalizeKey(assessment.discovery_key)) &&
+          !filledSelectionTitles.some((title) =>
+            titlesLikelyOverlap(title, assessment.title),
+          ) &&
           assessment.role_assessments.find((item) => item.role === slot.role)
             ?.eligible === true,
       );
