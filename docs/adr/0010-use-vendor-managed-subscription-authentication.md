@@ -1,0 +1,3 @@
+# Use vendor-managed subscription authentication
+
+The personal MVP uses Codex app server with ChatGPT-managed OAuth behind a provider adapter, and the boundary may later support other vendors that officially permit third-party use of a user's own subscription entitlement. Vendor runtimes must own login, credential storage, refresh, and entitlement checks; Musement receives an authenticated capability rather than tokens, never pools subscriptions, and never silently falls back to separately billed API usage. This preserves a replaceable provider boundary without turning subscription credentials into general API keys.
