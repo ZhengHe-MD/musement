@@ -130,6 +130,7 @@ export class SqliteMusementStore implements EditionStore {
           : [{
               discoveryId: slot.discovery.id,
               title: slot.discovery.title,
+              subjectTerms: slot.discovery.subjectTerms,
               materialFingerprints: [
                 slot.discovery.recommendedMaterial.fingerprint,
                 ...slot.discovery.alternativeMaterials.map(

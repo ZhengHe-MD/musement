@@ -277,11 +277,13 @@ function validateEditorialResponse(
   const materialIds = new Set(materials.map((material) => material.id));
   const assessedMaterialIds = new Set<string>();
   const assessedDiscoveryKeys = new Set<string>();
+  const assessmentsByKey = new Map<string, EditorialResponse["candidate_assessments"][number]>();
   for (const assessment of response.candidate_assessments) {
     if (assessedDiscoveryKeys.has(normalizeKey(assessment.discovery_key))) {
       throw new Error("Editorial response repeated a Discovery assessment.");
     }
     assessedDiscoveryKeys.add(normalizeKey(assessment.discovery_key));
+    assessmentsByKey.set(normalizeKey(assessment.discovery_key), assessment);
     if (
       !selectionSlotRoles.every(
         (role, index) => assessment.role_assessments[index]?.role === role,
@@ -315,6 +317,17 @@ function validateEditorialResponse(
   const claimedMaterialIds = new Set<string>();
   for (const slot of response.slots) {
     if (slot.status === "unavailable") {
+      const shortlist = response.shortlists.find((item) => item.role === slot.role);
+      const justifiedCandidate = shortlist?.discovery_keys.find((key) =>
+        assessmentsByKey
+          .get(normalizeKey(key))
+          ?.role_assessments.find((item) => item.role === slot.role)?.eligible === true,
+      );
+      if (justifiedCandidate !== undefined) {
+        throw new Error(
+          `Editorial response left ${slot.role} unavailable despite justified candidate ${justifiedCandidate}.`,
+        );
+      }
       continue;
     }
     if (!materialIds.has(slot.recommended_material_id)) {
@@ -325,10 +338,27 @@ function validateEditorialResponse(
     if (!assessedDiscoveryKeys.has(normalizeKey(slot.discovery_key))) {
       throw new Error(`Editorial selection referenced unassessed Discovery ${slot.discovery_key}.`);
     }
+    const assessment = assessmentsByKey.get(normalizeKey(slot.discovery_key));
+    const roleAssessment = assessment?.role_assessments.find(
+      (item) => item.role === slot.role,
+    );
+    const shortlist = response.shortlists.find((item) => item.role === slot.role);
+    if (roleAssessment?.eligible !== true) {
+      throw new Error(`Editorial selection was not eligible for ${slot.role}.`);
+    }
+    if (!shortlist?.discovery_keys.some((key) => normalizeKey(key) === normalizeKey(slot.discovery_key))) {
+      throw new Error(`Editorial selection was absent from the ${slot.role} shortlist.`);
+    }
     const slotMaterialIds = [
       slot.recommended_material_id,
       ...slot.alternative_material_ids,
     ];
+    if (
+      assessment === undefined ||
+      !sameStringSet(slotMaterialIds, assessment.material_ids)
+    ) {
+      throw new Error("Editorial selection did not match its assessed Material cluster.");
+    }
     if (new Set(slotMaterialIds).size !== slotMaterialIds.length) {
       throw new Error("Editorial response repeated a Material within a Discovery.");
     }
@@ -345,7 +375,7 @@ function validateEditorialResponse(
       }
       claimedMaterialIds.add(materialId);
     }
-    const discoveryId = discoveryIdForMaterials(slot, materials);
+    const discoveryId = discoveryIdentityForMaterials(slot, materials).id;
     if (discoveryIds.has(discoveryId)) {
       throw new Error("Editorial response selected the same Discovery twice.");
     }
@@ -383,11 +413,13 @@ function assembleSlots(
       material.estimatedMinutes,
       attentionBudgetMinutes,
     );
+    const identity = discoveryIdentityForMaterials(slot, materials);
     return {
       role: slot.role,
       status: "filled",
       discovery: {
-        id: discoveryIdForMaterials(slot, materials),
+        id: identity.id,
+        subjectTerms: identity.terms,
         title: slot.title,
         summary: slot.summary,
         slotReason: slot.slot_reason,
@@ -431,15 +463,44 @@ function assembleSlots(
   });
 }
 
-function discoveryIdForMaterials(
+function discoveryIdentityForMaterials(
   slot: Extract<EditorialResponse["slots"][number], { status: "filled" }>,
   materials: CollectedMaterial[],
-): string {
+): { id: string; terms: string[] } {
   const byId = new Map(materials.map((material) => [material.id, material]));
-  const fingerprints = [slot.recommended_material_id, ...slot.alternative_material_ids]
-    .map((id) => byId.get(id)?.fingerprint ?? id)
+  const cluster = [slot.recommended_material_id, ...slot.alternative_material_ids]
+    .flatMap((id) => {
+      const material = byId.get(id);
+      return material === undefined ? [] : [material];
+    });
+  const terms = subjectTermsFromMaterials(cluster);
+  return {
+    id: createHash("sha256").update(terms.join("\n")).digest("hex"),
+    terms,
+  };
+}
+
+function subjectTermsFromMaterials(materials: CollectedMaterial[]): string[] {
+  const ignored = new Set(["the", "and", "for", "with", "from", "that", "this", "into", "about", "new"]);
+  const counts = new Map<string, number>();
+  for (const material of materials) {
+    const text = `${material.title} ${material.summary}`.toLocaleLowerCase("en-US");
+    for (const term of text.match(/[\p{L}\p{N}]+/gu) ?? []) {
+      if (term.length < 4 || !/\p{L}/u.test(term) || ignored.has(term)) continue;
+      counts.set(term, (counts.get(term) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .sort(([leftTerm, leftCount], [rightTerm, rightCount]) =>
+      rightCount - leftCount || leftTerm.localeCompare(rightTerm),
+    )
+    .slice(0, 24)
+    .map(([term]) => term)
     .sort();
-  return createHash("sha256").update(fingerprints.join("\n")).digest("hex");
+}
+
+function sameStringSet(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((item) => right.includes(item));
 }
 
 function normalizeKey(value: string): string {
@@ -463,4 +524,5 @@ function titlesLikelyOverlap(left: string, right: string): boolean {
   return shared / Math.min(leftTerms.size, rightTerms.size) >= 0.6;
 }
 
-const editorialOutputSchema = z.toJSONSchema(editorialResponseSchema);
+const { $schema: _schemaDialect, ...editorialOutputSchema } =
+  z.toJSONSchema(editorialResponseSchema);

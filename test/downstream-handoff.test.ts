@@ -72,6 +72,7 @@ class OneDiscoveryEditor implements EditionEditor {
           status: "filled",
           discovery: {
             id: "discovery-one",
+            subjectTerms: ["worthwhile", "discovery"],
             title: "One worthwhile Discovery",
             summary: "A compact explanation.",
             slotReason: "It has demonstrated consequences.",

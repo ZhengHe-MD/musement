@@ -40,7 +40,11 @@ export interface ProviderDiagnostics {
   authenticationMode: string;
   planType: string | null;
   safeForMusement: boolean;
-  rateLimits: unknown;
+  rateLimits: {
+    reachedType: string | null;
+    usedPercent: number | null;
+    resetsAt: number | null;
+  };
 }
 
 const passiveItemTypes = new Set([
@@ -48,6 +52,9 @@ const passiveItemTypes = new Set([
   "reasoning",
   "plan",
   "userMessage",
+  "contextCompaction",
+  "enteredReviewMode",
+  "exitedReviewMode",
 ]);
 
 export class CodexAppServerProvider implements StructuredProvider {
@@ -95,14 +102,29 @@ export class CodexAppServerProvider implements StructuredProvider {
           const account = asObject(accountResponse.account);
           const authenticationMode =
             typeof account?.type === "string" ? account.type : "none";
-          const rateLimits = await connection.request("account/rateLimits/read", {});
+          const rateLimitResponse = await connection.request("account/rateLimits/read", {});
+          const activeLimit = asObject(asObject(rateLimitResponse)?.rateLimits);
+          const primaryLimit = asObject(activeLimit?.primary);
           return {
             provider: "openai",
             authenticationMode,
             planType:
               typeof account?.planType === "string" ? account.planType : null,
             safeForMusement: authenticationMode === "chatgpt",
-            rateLimits,
+            rateLimits: {
+              reachedType:
+                typeof activeLimit?.rateLimitReachedType === "string"
+                  ? activeLimit.rateLimitReachedType
+                  : null,
+              usedPercent:
+                typeof primaryLimit?.usedPercent === "number"
+                  ? primaryLimit.usedPercent
+                  : null,
+              resetsAt:
+                typeof primaryLimit?.resetsAt === "number"
+                  ? primaryLimit.resetsAt
+                  : null,
+            },
           };
         })(),
         this.#timeoutMs,
@@ -281,6 +303,8 @@ class JsonLineConnection {
       this.#resolveExit = null;
       if (code !== null && code !== 0) {
         this.#fail(new Error(`Codex app-server exited with code ${code}.`));
+      } else {
+        this.#fail(new Error("Codex app-server exited before completing its request."));
       }
     });
   }

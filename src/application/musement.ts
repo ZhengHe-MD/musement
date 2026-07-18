@@ -390,7 +390,7 @@ function assertValidDraft(
       );
     }
     const repeatedSubject = priorExposures.find((exposure) =>
-      titlesLikelySameSubject(slot.discovery.title, exposure.title),
+      termsLikelySameSubject(slot.discovery.subjectTerms, exposure.subjectTerms),
     );
     if (repeatedSubject !== undefined) {
       throw new Error(
@@ -400,19 +400,10 @@ function assertValidDraft(
   }
 }
 
-function titlesLikelySameSubject(left: string, right: string): boolean {
-  const leftTerms = subjectTerms(left);
-  const rightTerms = subjectTerms(right);
+function termsLikelySameSubject(left: string[], right: string[]): boolean {
+  const leftTerms = new Set(left);
+  const rightTerms = new Set(right);
   if (leftTerms.size === 0 || rightTerms.size === 0) return false;
   const shared = [...leftTerms].filter((term) => rightTerms.has(term)).length;
   return shared / Math.min(leftTerms.size, rightTerms.size) >= 0.6;
-}
-
-function subjectTerms(value: string): Set<string> {
-  const ignored = new Set(["the", "a", "an", "and", "of", "to", "in", "on", "for", "new", "important", "personally", "interesting", "wildcard"]);
-  return new Set(
-    value.toLocaleLowerCase("en-US").match(/[\p{L}\p{N}]+/gu)?.filter(
-      (term) => term.length > 2 && /\p{L}/u.test(term) && !ignored.has(term),
-    ) ?? [],
-  );
 }

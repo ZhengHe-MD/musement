@@ -21,7 +21,9 @@ describe("Codex app-server provider", () => {
       planType: "plus",
       safeForMusement: true,
       rateLimits: {
-        rateLimits: { rateLimitReachedType: null },
+        reachedType: null,
+        usedPercent: null,
+        resetsAt: null,
       },
     });
   });

@@ -39,10 +39,10 @@ export class RawMaterialCache {
       }
       throw new Error(`Raw Material Cache entry for ${url} is unreadable.`);
     }
+    const effectiveRetentionDays = retentionDays ?? this.#defaultRetentionDays;
     const configuredExpiry =
-      retentionDays === undefined
-        ? Number.POSITIVE_INFINITY
-        : Date.parse(entry.fetchedAt) + retentionDays * 24 * 60 * 60 * 1_000;
+      Date.parse(entry.fetchedAt) +
+      effectiveRetentionDays * 24 * 60 * 60 * 1_000;
     if (
       Math.min(Date.parse(entry.expiresAt), configuredExpiry) <=
       this.#clock.now().getTime()
@@ -94,7 +94,13 @@ export class RawMaterialCache {
       const path = join(this.#directory, name);
       try {
         const entry = JSON.parse(await readFile(path, "utf8")) as CacheEntry;
-        if (Date.parse(entry.expiresAt) > this.#clock.now().getTime()) continue;
+        const currentDefaultExpiry =
+          Date.parse(entry.fetchedAt) +
+          this.#defaultRetentionDays * 24 * 60 * 60 * 1_000;
+        if (
+          Math.min(Date.parse(entry.expiresAt), currentDefaultExpiry) >
+          this.#clock.now().getTime()
+        ) continue;
       } catch {
         // An unreadable cache artifact cannot be trusted as retained source data.
       }

@@ -3,6 +3,7 @@ import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from "nod
 import { isIP } from "node:net";
 
 import { XMLParser } from "fast-xml-parser";
+import ipaddr from "ipaddr.js";
 import { Agent, fetch as undiciFetch } from "undici";
 
 import type { ConfiguredSource } from "../config/configuration.js";
@@ -228,30 +229,11 @@ function safeLookup(
 }
 
 function isPrivateAddress(address: string): boolean {
-  const normalized = address.toLocaleLowerCase("en-US");
-  if (normalized.includes(":")) {
-    return (
-      normalized === "::1" ||
-      normalized === "::" ||
-      normalized.startsWith("::ffff:") ||
-      normalized.startsWith("fc") ||
-      normalized.startsWith("fd") ||
-      /^fe[89ab]/.test(normalized)
-    );
+  try {
+    return ipaddr.parse(address).range() !== "unicast";
+  } catch {
+    return true;
   }
-  const octets = normalized.split(".").map(Number);
-  const first = octets[0] ?? -1;
-  const second = octets[1] ?? -1;
-  return (
-    first === 0 ||
-    first === 10 ||
-    first === 127 ||
-    (first === 100 && second >= 64 && second <= 127) ||
-    (first === 169 && second === 254) ||
-    (first === 172 && second >= 16 && second <= 31) ||
-    (first === 192 && second === 168) ||
-    first >= 224
-  );
 }
 
 function parseJsonFeed(

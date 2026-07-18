@@ -81,7 +81,7 @@ describe("Musement CLI", () => {
       authenticationMode: "chatgpt",
       planType: "plus",
       safeForMusement: true,
-      rateLimits: { rateLimits: { rateLimitReachedType: null } },
+      rateLimits: { reachedType: null, usedPercent: null, resetsAt: null },
     });
 
     await runCli(["node", "musement", "doctor"], {
@@ -120,6 +120,7 @@ class FixtureEditor implements EditionEditor {
           status: "filled",
           discovery: {
             id: "one",
+            subjectTerms: ["worthwhile", "discovery"],
             title: "One worthwhile Discovery",
             summary: "A compact explanation of what it is.",
             slotReason: "It has meaningful consequences.",
