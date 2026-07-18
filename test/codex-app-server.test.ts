@@ -66,6 +66,23 @@ describe("Codex app-server provider", () => {
     ).rejects.toThrow("forbidden tool use: commandExecution");
   });
 
+  it("fails closed for a newly introduced non-passive item type", async () => {
+    const provider = new CodexAppServerProvider({
+      spawnProcess: () =>
+        spawn(process.execPath, [fixturePath], {
+          env: { ...process.env, FAKE_CODEX_ITEM_TYPE: "imageGeneration" },
+        }),
+      timeoutMs: 2_000,
+    });
+
+    await expect(
+      provider.completeStructured({
+        prompt: "Return JSON without tools.",
+        outputSchema: { type: "object" },
+      }),
+    ).rejects.toThrow("forbidden tool use: imageGeneration");
+  });
+
   it("refuses API-key authentication rather than incurring separate billing", async () => {
     const provider = new CodexAppServerProvider({
       spawnProcess: () =>

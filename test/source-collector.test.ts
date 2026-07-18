@@ -109,4 +109,30 @@ describe("public Source Portfolio collection", () => {
       url: "https://example.com/essay",
     });
   });
+
+  it("stops reading a lengthless response after the 5 MB limit", async () => {
+    const source: ConfiguredSource = {
+      id: "oversized",
+      name: "Oversized",
+      kind: "web",
+      url: "https://example.com/oversized",
+      enabled: true,
+    };
+    let emitted = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        emitted += 1;
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        if (emitted === 7) controller.close();
+      },
+    });
+    const collector = new PublicSourceCollector(async () =>
+      new Response(body, { status: 200 }),
+    );
+
+    await expect(collector.collect([source])).rejects.toThrow(
+      "exceeds the 5 MB collection limit",
+    );
+    expect(emitted).toBeGreaterThanOrEqual(6);
+  });
 });

@@ -1,34 +1,35 @@
-import { createHash, randomUUID } from "node:crypto";
-import { lookup } from "node:dns/promises";
+import { createHash } from "node:crypto";
+import { lookup as dnsLookup, type LookupAddress, type LookupOptions } from "node:dns";
 import { isIP } from "node:net";
 
 import { XMLParser } from "fast-xml-parser";
+import { Agent, fetch as undiciFetch } from "undici";
 
 import type { ConfiguredSource } from "../config/configuration.js";
 import type { CollectedMaterial } from "../domain/contracts.js";
 
 interface SourceContentCache {
-  get(url: string): Promise<string | null>;
+  get(url: string, retentionDays?: number): Promise<string | null>;
   put(url: string, body: string, retentionDays?: number): Promise<void>;
+  sweepExpired(): Promise<number>;
 }
 
 export type Fetcher = (
-  input: string | URL | Request,
+  input: string,
   init?: RequestInit,
 ) => Promise<Response>;
 
 export class PublicSourceCollector {
   readonly #fetch: Fetcher;
   readonly #cache: SourceContentCache | null;
-  readonly #resolvePublicAddresses: boolean;
 
-  constructor(fetcher: Fetcher = fetch, cache: SourceContentCache | null = null) {
+  constructor(fetcher: Fetcher = safePublicFetch, cache: SourceContentCache | null = null) {
     this.#fetch = fetcher;
     this.#cache = cache;
-    this.#resolvePublicAddresses = fetcher === fetch;
   }
 
   async collect(sources: ConfiguredSource[]): Promise<CollectedMaterial[]> {
+    await this.#cache?.sweepExpired();
     const collected = await Promise.all(
       sources
         .filter((source) => source.enabled)
@@ -43,9 +44,36 @@ export class PublicSourceCollector {
     return [...byUrl.values()];
   }
 
+  async broaden(materials: CollectedMaterial[]): Promise<CollectedMaterial[]> {
+    const seen = new Set(materials.flatMap((material) => [material.url, ...material.provenance]));
+    const references = materials.flatMap((material) =>
+      material.referencedUrls.map((url) => ({ parent: material, url })),
+    ).filter(({ url }) => !seen.has(url)).slice(0, maximumBroadenedSources);
+    const discovered = await Promise.all(
+      references.map(async ({ parent, url }, index) => {
+        const source: ConfiguredSource = {
+          id: `discovered-${index}`,
+          name: `Discovered via ${parent.source.name}`,
+          kind: "web",
+          url,
+          enabled: true,
+          cache_retention_days: 0,
+        };
+        const body = await this.#fetchSource(source);
+        return parseWebPage(body, source).map((material) => ({
+          ...material,
+          provenance: [...parent.provenance, parent.url, url],
+        }));
+      }),
+    );
+    return discovered.flat();
+  }
+
   async #collectSource(source: ConfiguredSource): Promise<CollectedMaterial[]> {
     const cachingAllowed = source.cache_retention_days !== 0;
-    const cached = cachingAllowed ? await this.#cache?.get(source.url) : null;
+    const cached = cachingAllowed
+      ? await this.#cache?.get(source.url, source.cache_retention_days)
+      : null;
     const body = cached ?? (await this.#fetchSource(source));
     if (cached === null && this.#cache !== null) {
       await this.#cache.put(
@@ -55,22 +83,21 @@ export class PublicSourceCollector {
       );
     }
 
-    if (source.kind === "rss" || source.kind === "atom") {
-      return parseXmlFeed(body, source);
+    switch (source.kind) {
+      case "rss":
+      case "atom":
+        return parseXmlFeed(body, source);
+      case "json-feed":
+        return parseJsonFeed(body, source);
+      case "web":
+        return parseWebPage(body, source);
     }
-    if (source.kind === "json-feed") {
-      return parseJsonFeed(body, source);
-    }
-    if (source.kind === "web") {
-      return parseWebPage(body, source);
-    }
-    throw new Error(`Source kind ${source.kind} is not implemented.`);
   }
 
   async #fetchSource(source: ConfiguredSource): Promise<string> {
     let currentUrl = source.url;
     for (let redirectCount = 0; redirectCount <= 5; redirectCount += 1) {
-      await assertPublicSourceUrl(currentUrl, this.#resolvePublicAddresses);
+      assertPublicSourceUrl(currentUrl);
       const response = await this.#fetch(currentUrl, {
         headers: {
           accept:
@@ -97,27 +124,51 @@ export class PublicSourceCollector {
       if (Number.isFinite(declaredSize) && declaredSize > maximumSourceBytes) {
         throw new Error(`Source ${source.id} exceeds the 5 MB collection limit.`);
       }
-      const bytes = await response.arrayBuffer();
-      if (bytes.byteLength > maximumSourceBytes) {
-        throw new Error(`Source ${source.id} exceeds the 5 MB collection limit.`);
-      }
-      return new TextDecoder().decode(bytes);
+      return readBoundedBody(response, source.id);
     }
     throw new Error(`Source ${source.id} exceeded the redirect limit.`);
   }
 }
 
 const maximumSourceBytes = 5 * 1024 * 1024;
+const maximumBroadenedSources = 8;
 
-async function assertPublicSourceUrl(
-  value: string,
-  resolveAddresses: boolean,
-): Promise<void> {
+async function readBoundedBody(response: Response, sourceId: string): Promise<string> {
+  if (response.body === null) return "";
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      size += result.value.byteLength;
+      if (size > maximumSourceBytes) {
+        await reader.cancel("Musement source size limit exceeded");
+        throw new Error(`Source ${sourceId} exceeds the 5 MB collection limit.`);
+      }
+      chunks.push(result.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(body);
+}
+
+function assertPublicSourceUrl(value: string): void {
   const url = new URL(value);
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error(`Refusing non-public source URL ${value}.`);
   }
-  const hostname = url.hostname.toLocaleLowerCase("en-US");
+  const hostname = url.hostname
+    .replace(/^\[|\]$/g, "")
+    .toLocaleLowerCase("en-US");
   if (
     hostname === "localhost" ||
     hostname.endsWith(".localhost") ||
@@ -126,15 +177,54 @@ async function assertPublicSourceUrl(
   ) {
     throw new Error(`Refusing private-network source URL ${value}.`);
   }
-  if (resolveAddresses && isIP(hostname) === 0) {
-    const addresses = await lookup(hostname, { all: true });
-    if (
-      addresses.length === 0 ||
-      addresses.some((result) => isPrivateAddress(result.address))
-    ) {
-      throw new Error(`Refusing source ${value} because it resolves privately.`);
+}
+
+const safeDispatcher = new Agent({ connect: { lookup: safeLookup } });
+
+function safePublicFetch(
+  input: string,
+  init?: RequestInit,
+): Promise<Response> {
+  const request = { ...init, dispatcher: safeDispatcher };
+  return undiciFetch(input, request as never) as unknown as Promise<Response>;
+}
+
+function safeLookup(
+  hostname: string,
+  options: LookupOptions,
+  callback: (
+    error: NodeJS.ErrnoException | null,
+    address: string | LookupAddress[],
+    family?: number,
+  ) => void,
+): void {
+  dnsLookup(hostname, { ...options, all: true }, (error, addresses) => {
+    if (error !== null) {
+      callback(error, []);
+      return;
     }
-  }
+    const publicAddresses = addresses.filter(
+      (address) => !isPrivateAddress(address.address),
+    );
+    if (publicAddresses.length !== addresses.length || publicAddresses.length === 0) {
+      const refusal = new Error(
+        `Refusing source host ${hostname} because it resolves privately.`,
+      ) as NodeJS.ErrnoException;
+      refusal.code = "EPRIVATEHOST";
+      callback(refusal, []);
+      return;
+    }
+    if (options.all === true) {
+      callback(null, publicAddresses);
+      return;
+    }
+    const selected = publicAddresses[0];
+    if (selected === undefined) {
+      callback(new Error(`Source host ${hostname} has no addresses.`), []);
+      return;
+    }
+    callback(null, selected.address, selected.family);
+  });
 }
 
 function isPrivateAddress(address: string): boolean {
@@ -143,6 +233,7 @@ function isPrivateAddress(address: string): boolean {
     return (
       normalized === "::1" ||
       normalized === "::" ||
+      normalized.startsWith("::ffff:") ||
       normalized.startsWith("fc") ||
       normalized.startsWith("fd") ||
       /^fe[89ab]/.test(normalized)
@@ -198,6 +289,7 @@ function parseJsonFeed(
         publishedAt: normalizedDate(textValue(item.date_published)),
         content,
         provenance: [source.url, url],
+        referencedUrls: linksFromHtml(rawContent, url),
       }),
     ];
   });
@@ -228,6 +320,7 @@ function parseWebPage(
       ),
       content,
       provenance: [source.url],
+      referencedUrls: linksFromHtml(article, source.url),
     }),
   ];
 }
@@ -240,10 +333,12 @@ function createCollectedMaterial(input: {
   publishedAt: string | null;
   content: string;
   provenance: string[];
+  referencedUrls: string[];
 }): CollectedMaterial {
+  const fingerprint = createHash("sha256").update(input.url).digest("hex");
   return {
-    id: randomUUID(),
-    fingerprint: createHash("sha256").update(input.url).digest("hex"),
+    id: fingerprint,
+    fingerprint,
     title: input.title,
     url: input.url,
     author: input.author,
@@ -254,6 +349,7 @@ function createCollectedMaterial(input: {
     estimatedMinutes: Math.max(1, Math.ceil(wordCount(input.content) / 220)),
     source: { id: input.source.id, name: input.source.name },
     provenance: input.provenance,
+    referencedUrls: input.referencedUrls,
   };
 }
 
@@ -328,10 +424,11 @@ function parseXmlFeed(
         textValue(item.updated),
     );
 
+    const fingerprint = createHash("sha256").update(url).digest("hex");
     return [
       {
-        id: randomUUID(),
-        fingerprint: createHash("sha256").update(url).digest("hex"),
+        id: fingerprint,
+        fingerprint,
         title,
         url,
         author,
@@ -342,6 +439,7 @@ function parseXmlFeed(
         estimatedMinutes: Math.max(1, Math.ceil(wordCount(content) / 220)),
         source: { id: source.id, name: source.name },
         provenance: [source.url, url],
+        referencedUrls: linksFromHtml(rawContent, url),
       },
     ];
   });
@@ -404,6 +502,22 @@ function htmlToText(value: string): string {
     .replace(/&gt;/gi, ">")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function linksFromHtml(value: string, baseUrl: string): string[] {
+  const links = new Set<string>();
+  for (const match of value.matchAll(/<a\b[^>]*href=["']([^"']+)["']/gi)) {
+    try {
+      const url = new URL(match[1] ?? "", baseUrl);
+      if ((url.protocol === "https:" || url.protocol === "http:") && url.username === "" && url.password === "") {
+        url.hash = "";
+        links.add(url.href);
+      }
+    } catch {
+      // Ignore malformed references; configured and fetched URLs remain traced.
+    }
+  }
+  return [...links];
 }
 
 function wordCount(value: string): number {

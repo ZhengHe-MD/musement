@@ -43,12 +43,11 @@ export interface ProviderDiagnostics {
   rateLimits: unknown;
 }
 
-const forbiddenItemTypes = new Set([
-  "commandExecution",
-  "fileChange",
-  "mcpToolCall",
-  "dynamicToolCall",
-  "webSearch",
+const passiveItemTypes = new Set([
+  "agentMessage",
+  "reasoning",
+  "plan",
+  "userMessage",
 ]);
 
 export class CodexAppServerProvider implements StructuredProvider {
@@ -75,7 +74,7 @@ export class CodexAppServerProvider implements StructuredProvider {
         this.#timeoutMs,
       );
     } finally {
-      connection.close();
+      await connection.close();
       await rm(sandboxDirectory, { recursive: true, force: true });
     }
   }
@@ -109,7 +108,7 @@ export class CodexAppServerProvider implements StructuredProvider {
         this.#timeoutMs,
       );
     } finally {
-      connection.close();
+      await connection.close();
       await rm(sandboxDirectory, { recursive: true, force: true });
     }
   }
@@ -261,25 +260,27 @@ class JsonLineConnection {
   #nextRequestId = 1;
   #turnResolve: ((turn: TurnResult) => void) | null = null;
   #turnReject: ((error: Error) => void) | null = null;
-  #stderr = "";
+  readonly #exitPromise: Promise<void>;
+  #resolveExit: (() => void) | null = null;
+  #exited = false;
   finalAgentMessage: string | null = null;
   forbiddenToolUse: string | null = null;
 
   constructor(process: ChildProcessWithoutNullStreams) {
     this.#process = process;
+    this.#exitPromise = new Promise((resolve) => {
+      this.#resolveExit = resolve;
+    });
     const lines = createInterface({ input: process.stdout });
     lines.on("line", (line) => this.#receive(line));
-    process.stderr.on("data", (chunk: Buffer) => {
-      this.#stderr = `${this.#stderr}${chunk.toString("utf8")}`.slice(-4_000);
-    });
+    process.stderr.resume();
     process.once("error", (error) => this.#fail(error));
     process.once("exit", (code) => {
+      this.#exited = true;
+      this.#resolveExit?.();
+      this.#resolveExit = null;
       if (code !== null && code !== 0) {
-        this.#fail(
-          new Error(
-            `Codex app-server exited with code ${code}.${this.#stderr.length > 0 ? ` ${this.#stderr}` : ""}`,
-          ),
-        );
+        this.#fail(new Error(`Codex app-server exited with code ${code}.`));
       }
     });
   }
@@ -306,8 +307,15 @@ class JsonLineConnection {
     });
   }
 
-  close(): void {
+  async close(): Promise<void> {
+    if (this.#exited) return;
+    this.#fail(new Error("Codex app-server connection closed."));
+    this.#process.stdin.end();
     this.#process.kill("SIGTERM");
+    if (!(await settlesWithin(this.#exitPromise, 1_000))) {
+      this.#process.kill("SIGKILL");
+      await settlesWithin(this.#exitPromise, 1_000);
+    }
   }
 
   #send(message: JsonObject): void {
@@ -341,7 +349,7 @@ class JsonLineConnection {
     if (message.method === "item/started" || message.method === "item/completed") {
       const item = asObject(params?.item);
       const type = typeof item?.type === "string" ? item.type : null;
-      if (type !== null && forbiddenItemTypes.has(type)) {
+      if (type !== null && !passiveItemTypes.has(type)) {
         this.forbiddenToolUse = type;
       }
       if (
@@ -393,5 +401,19 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
     if (timeout !== undefined) {
       clearTimeout(timeout);
     }
+  }
+}
+
+async function settlesWithin(promise: Promise<void>, timeoutMs: number): Promise<boolean> {
+  let timeout: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise.then(() => true),
+      new Promise<false>((resolve) => {
+        timeout = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }

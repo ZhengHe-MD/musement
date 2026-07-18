@@ -62,14 +62,13 @@ describe("Musement CLI", () => {
     await runCli(["node", "musement", "today", "--json"], {
       stdout: (text) => jsonOutput.push(text),
       stderr: () => undefined,
-      createRuntime: async () => runtime,
+      createRuntime: async () => createFixtureRuntime(directory),
     });
     expect(JSON.parse(jsonOutput.join(""))).toMatchObject({
       localDate: "2026-07-18",
       status: "degraded",
     });
 
-    runtime.close();
   });
 
   it("reports whether the provider is safe for subscription-backed use", async () => {
@@ -95,7 +94,6 @@ describe("Musement CLI", () => {
       authenticationMode: "chatgpt",
       safeForMusement: true,
     });
-    runtime.close();
   });
 });
 
@@ -128,6 +126,7 @@ class FixtureEditor implements EditionEditor {
             evidenceStatus: "Supported.",
             recommendedMaterial: {
               id: "material-one",
+              fingerprint: "material-one".padEnd(64, "0"),
               title: "Read one",
               author: "Author",
               source: "Source",

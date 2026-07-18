@@ -78,6 +78,7 @@ class OneDiscoveryEditor implements EditionEditor {
             evidenceStatus: "Supported.",
             recommendedMaterial: {
               id: "material-one",
+              fingerprint: "material-one".padEnd(64, "0"),
               title: "Read about one",
               author: "Author",
               source: "Source",

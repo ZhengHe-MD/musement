@@ -1,9 +1,12 @@
 import { DatabaseSync } from "node:sqlite";
+import { chmodSync } from "node:fs";
 
 import type {
   DailyEdition,
   DiscoverySelectedEvent,
   EditionStore,
+  ExposureEvidence,
+  FeedbackEvidence,
   GenerationAttempt,
   MvpEvaluation,
   PreferenceProposal,
@@ -39,9 +42,11 @@ interface PreferenceProposalRow {
 
 export class SqliteMusementStore implements EditionStore {
   readonly #database: DatabaseSync;
+  #closed = false;
 
   constructor(path: string) {
     this.#database = new DatabaseSync(path);
+    chmodSync(path, 0o600);
     this.#database.exec("PRAGMA journal_mode = WAL;");
     this.#database.exec(`
       CREATE TABLE IF NOT EXISTS daily_editions (
@@ -115,6 +120,58 @@ export class SqliteMusementStore implements EditionStore {
       .prepare("SELECT discovery_id FROM exposures ORDER BY discovery_id")
       .all() as unknown as Array<{ discovery_id: string }>;
     return rows.map((row) => row.discovery_id);
+  }
+
+  listExposureEvidence(): ExposureEvidence[] {
+    return this.listEditions().flatMap((edition) =>
+      edition.slots.flatMap((slot) =>
+        slot.status === "unavailable"
+          ? []
+          : [{
+              discoveryId: slot.discovery.id,
+              title: slot.discovery.title,
+              materialFingerprints: [
+                slot.discovery.recommendedMaterial.fingerprint,
+                ...slot.discovery.alternativeMaterials.map(
+                  (material) => material.fingerprint,
+                ),
+              ],
+            }],
+      ),
+    );
+  }
+
+  listFeedbackEvidence(): FeedbackEvidence[] {
+    const editionsById = new Map(
+      this.listEditions().map((edition) => [edition.id, edition]),
+    );
+    const rows = this.#database.prepare(
+      `SELECT edition_id, discovery_id, role, kind, reason
+       FROM feedback ORDER BY recorded_at, rowid`,
+    ).all() as unknown as Array<{
+      edition_id: string;
+      discovery_id: string;
+      role: FeedbackEvidence["role"];
+      kind: FeedbackEvidence["kind"];
+      reason: FeedbackEvidence["reason"];
+    }>;
+    return rows.flatMap((row) => {
+      const edition = editionsById.get(row.edition_id);
+      const slot = edition?.slots.find(
+        (candidate) =>
+          candidate.status === "filled" &&
+          candidate.discovery.id === row.discovery_id,
+      );
+      return slot?.status === "filled"
+        ? [{
+            discoveryId: row.discovery_id,
+            title: slot.discovery.title,
+            role: row.role,
+            kind: row.kind,
+            reason: row.reason,
+          }]
+        : [];
+    });
   }
 
   saveCanonicalEdition(edition: DailyEdition): DailyEdition {
@@ -358,7 +415,9 @@ export class SqliteMusementStore implements EditionStore {
   }
 
   close(): void {
+    if (this.#closed) return;
     this.#database.close();
+    this.#closed = true;
   }
 }
 

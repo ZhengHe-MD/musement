@@ -16,6 +16,7 @@ export type MaterialFormat =
 
 export interface RecommendedMaterial {
   id: string;
+  fingerprint: string;
   title: string;
   author: string;
   source: string;
@@ -31,7 +32,7 @@ export interface RecommendedMaterial {
 
 export type AlternativeMaterial = Pick<
   RecommendedMaterial,
-  "id" | "title" | "author" | "source" | "format" | "url" | "provenance"
+  "id" | "fingerprint" | "title" | "author" | "source" | "format" | "url" | "provenance"
 >;
 
 export interface CollectedMaterial {
@@ -50,6 +51,7 @@ export interface CollectedMaterial {
     name: string;
   };
   provenance: string[];
+  referencedUrls: string[];
 }
 
 export interface SelectedDiscovery {
@@ -85,6 +87,8 @@ export interface ProviderTrace {
 
 export interface SelectionTrace {
   candidates: unknown[];
+  assessments?: unknown[];
+  shortlists?: unknown[];
   decisions: string[];
   provider: ProviderTrace;
 }
@@ -214,6 +218,22 @@ export interface MvpEvaluation {
 export interface GenerateEditionRequest {
   localDate: string;
   excludedDiscoveryIds: string[];
+  priorExposures: ExposureEvidence[];
+  feedbackEvidence: FeedbackEvidence[];
+}
+
+export interface ExposureEvidence {
+  discoveryId: string;
+  title: string;
+  materialFingerprints: string[];
+}
+
+export interface FeedbackEvidence {
+  discoveryId: string;
+  title: string;
+  role: SelectionSlotRole;
+  kind: FeedbackKind;
+  reason: NotUsefulReason | null;
 }
 
 export interface EditionEditor {
@@ -223,6 +243,8 @@ export interface EditionEditor {
 export interface EditionStore {
   findEdition(localDate: string): DailyEdition | null;
   listExposedDiscoveryIds(): string[];
+  listExposureEvidence(): ExposureEvidence[];
+  listFeedbackEvidence(): FeedbackEvidence[];
   saveCanonicalEdition(edition: DailyEdition): DailyEdition;
   beginGenerationAttempt(attempt: GenerationAttempt): void;
   finishGenerationAttempt(

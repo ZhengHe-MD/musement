@@ -63,11 +63,14 @@ export class Musement {
 
     try {
       const excludedDiscoveryIds = this.#store.listExposedDiscoveryIds();
+      const priorExposures = this.#store.listExposureEvidence();
       const draft = await this.#editor.generate({
         localDate,
         excludedDiscoveryIds,
+        priorExposures,
+        feedbackEvidence: this.#store.listFeedbackEvidence(),
       });
-      assertValidDraft(draft, localDate, new Set(excludedDiscoveryIds));
+      assertValidDraft(draft, localDate, priorExposures);
 
       const edition: DailyEdition = {
         ...draft,
@@ -339,7 +342,7 @@ function localDateInTimezone(date: Date, timezone: string): string {
 function assertValidDraft(
   draft: DailyEditionDraft,
   localDate: string,
-  excludedDiscoveryIds: ReadonlySet<string>,
+  priorExposures: import("../domain/contracts.js").ExposureEvidence[],
 ): void {
   if (draft.localDate !== localDate) {
     throw new Error(
@@ -365,12 +368,51 @@ function assertValidDraft(
     throw new Error("A Discovery cannot occupy more than one Selection Slot.");
   }
 
-  const repeatedDiscoveryId = discoveryIds.find((id) =>
-    excludedDiscoveryIds.has(id),
-  );
+  const excludedDiscoveryIds = new Set(priorExposures.map((item) => item.discoveryId));
+  const repeatedDiscoveryId = discoveryIds.find((id) => excludedDiscoveryIds.has(id));
   if (repeatedDiscoveryId !== undefined) {
     throw new Error(
       `Discovery ${repeatedDiscoveryId} was previously exposed and is not eligible.`,
     );
   }
+  const priorFingerprints = new Set(
+    priorExposures.flatMap((item) => item.materialFingerprints),
+  );
+  for (const slot of draft.slots) {
+    if (slot.status === "unavailable") continue;
+    const fingerprints = [
+      slot.discovery.recommendedMaterial.fingerprint,
+      ...slot.discovery.alternativeMaterials.map((material) => material.fingerprint),
+    ];
+    if (fingerprints.some((fingerprint) => priorFingerprints.has(fingerprint))) {
+      throw new Error(
+        `Discovery ${slot.discovery.id} reuses Material from a prior Exposure.`,
+      );
+    }
+    const repeatedSubject = priorExposures.find((exposure) =>
+      titlesLikelySameSubject(slot.discovery.title, exposure.title),
+    );
+    if (repeatedSubject !== undefined) {
+      throw new Error(
+        `Discovery ${slot.discovery.id} is too similar to prior Exposure ${repeatedSubject.discoveryId}.`,
+      );
+    }
+  }
+}
+
+function titlesLikelySameSubject(left: string, right: string): boolean {
+  const leftTerms = subjectTerms(left);
+  const rightTerms = subjectTerms(right);
+  if (leftTerms.size === 0 || rightTerms.size === 0) return false;
+  const shared = [...leftTerms].filter((term) => rightTerms.has(term)).length;
+  return shared / Math.min(leftTerms.size, rightTerms.size) >= 0.6;
+}
+
+function subjectTerms(value: string): Set<string> {
+  const ignored = new Set(["the", "a", "an", "and", "of", "to", "in", "on", "for", "new", "important", "personally", "interesting", "wildcard"]);
+  return new Set(
+    value.toLocaleLowerCase("en-US").match(/[\p{L}\p{N}]+/gu)?.filter(
+      (term) => term.length > 2 && /\p{L}/u.test(term) && !ignored.has(term),
+    ) ?? [],
+  );
 }

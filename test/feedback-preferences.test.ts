@@ -86,6 +86,7 @@ class FeedbackFixtureEditor implements EditionEditor {
             evidenceStatus: "Supported.",
             recommendedMaterial: {
               id: "feedback-material",
+              fingerprint: "feedback-material".padEnd(64, "0"),
               title: "Material",
               author: "Author",
               source: "Source",

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -55,6 +55,11 @@ export async function runCli(
   dependencies: CliDependencies = defaultDependencies,
 ): Promise<void> {
   const program = new Command();
+  const runtimeHolder: { current: Runtime | null } = { current: null };
+  const runtimeForCommand = async (): Promise<Runtime> => {
+    runtimeHolder.current ??= await runtimeFromProgram(program, dependencies);
+    return runtimeHolder.current;
+  };
   program
     .name("musement")
     .description("A deliberately small daily encounter with the wider world.")
@@ -88,7 +93,7 @@ export async function runCli(
     });
 
   const todayAction = async (options: { json?: boolean }) => {
-    const runtime = await runtimeFromProgram(program, dependencies);
+    const runtime = await runtimeForCommand();
     const edition = await runtime.musement.viewToday();
     dependencies.stdout(
       options.json
@@ -101,7 +106,7 @@ export async function runCli(
     .command("doctor")
     .description("Inspect provider authentication and rate-limit state")
     .action(async () => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       if (runtime.providerDiagnostics === undefined) {
         throw new Error("Provider diagnostics are unavailable.");
       }
@@ -127,7 +132,7 @@ export async function runCli(
     .description("Inspect Generation Attempts for a local date")
     .argument("[date]", "local date in YYYY-MM-DD")
     .action(async (date: string | undefined) => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       const localDate = date ?? currentLocalDate(runtime.configuration?.timezone);
       dependencies.stdout(
         `${JSON.stringify(runtime.musement.generationAttempts(localDate), null, 2)}\n`,
@@ -139,7 +144,7 @@ export async function runCli(
     .description("Inspect a Daily Edition's Selection Trace")
     .argument("<date>", "local date in YYYY-MM-DD")
     .action(async (date: string) => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       const edition = runtime.musement.edition(date);
       if (edition === null) {
         throw new Error(`No Daily Edition exists for ${date}.`);
@@ -159,7 +164,7 @@ export async function runCli(
       ]).makeOptionMandatory(),
     )
     .action(async (date: string, options: { slot: SelectionSlotRole }) => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       const event = runtime.musement.selectDiscovery({
         localDate: date,
         role: options.slot,
@@ -173,7 +178,7 @@ export async function runCli(
     .option("--after <position>", "exclusive stream cursor", parseInteger, 0)
     .option("--limit <count>", "maximum events", parseInteger, 100)
     .action(async (options: { after: number; limit: number }) => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       const events = runtime.musement.readHandoffEvents({
         afterPosition: options.after,
         limit: options.limit,
@@ -220,7 +225,7 @@ export async function runCli(
           reason?: NotUsefulReason;
         },
       ) => {
-        const runtime = await runtimeFromProgram(program, dependencies);
+        const runtime = await runtimeForCommand();
         const result = runtime.musement.recordFeedback({
           localDate: date,
           role: options.slot,
@@ -242,7 +247,7 @@ export async function runCli(
       ]),
     )
     .action(async (options: { status?: PreferenceProposal["status"] }) => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       dependencies.stdout(
         `${JSON.stringify(runtime.musement.preferenceProposals(options.status), null, 2)}\n`,
       );
@@ -253,7 +258,7 @@ export async function runCli(
     .description("Confirm and apply one Preference Proposal")
     .argument("<id>", "Preference Proposal id")
     .action(async (id: string) => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       const proposal = await runtime.musement.confirmPreferenceProposal(id);
       dependencies.stdout(`${JSON.stringify(proposal, null, 2)}\n`);
     });
@@ -263,7 +268,7 @@ export async function runCli(
     .description("Reject one Preference Proposal")
     .argument("<id>", "Preference Proposal id")
     .action(async (id: string) => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       const proposal = runtime.musement.rejectPreferenceProposal(id);
       dependencies.stdout(`${JSON.stringify(proposal, null, 2)}\n`);
     });
@@ -272,7 +277,7 @@ export async function runCli(
     .command("evaluation")
     .description("Review the one-time MVP evaluation window")
     .action(async () => {
-      const runtime = await runtimeFromProgram(program, dependencies);
+      const runtime = await runtimeForCommand();
       dependencies.stdout(
         `${JSON.stringify(runtime.musement.mvpEvaluationReview(), null, 2)}\n`,
       );
@@ -298,7 +303,7 @@ export async function runCli(
         worthwhile: string[];
         continue: "yes" | "no";
       }) => {
-        const runtime = await runtimeFromProgram(program, dependencies);
+        const runtime = await runtimeForCommand();
         const evaluation = runtime.musement.recordMvpEvaluation({
           worthwhileDiscoveryIds: options.worthwhile,
           wantsToContinue: options.continue === "yes",
@@ -311,7 +316,11 @@ export async function runCli(
     writeOut: dependencies.stdout,
     writeErr: dependencies.stderr,
   });
-  await program.parseAsync(argv);
+  try {
+    await program.parseAsync(argv);
+  } finally {
+    runtimeHolder.current?.close();
+  }
 }
 
 async function runtimeFromProgram(
@@ -330,7 +339,8 @@ export async function createProductionRuntime(options: {
   dataDirectory: string;
 }): Promise<Runtime> {
   const configuration = await loadConfiguration(options.configPath);
-  await mkdir(options.dataDirectory, { recursive: true });
+  await mkdir(options.dataDirectory, { recursive: true, mode: 0o700 });
+  await chmod(options.dataDirectory, 0o700);
   const store = new SqliteMusementStore(
     resolve(options.dataDirectory, "musement.sqlite"),
   );
@@ -338,7 +348,7 @@ export async function createProductionRuntime(options: {
     directory: resolve(options.dataDirectory, "raw-material-cache"),
     defaultRetentionDays: configuration.cache_retention_days,
   });
-  const collector = new PublicSourceCollector(fetch, cache);
+  const collector = new PublicSourceCollector(undefined, cache);
   const provider = new CodexAppServerProvider();
   const editor = new AiEditionEditor({ configuration, collector, provider });
   const musement = new Musement({

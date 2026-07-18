@@ -10,9 +10,13 @@ const interestStatementSchema = z.object({
 });
 
 const publicUrlSchema = z.url().refine((value) => {
-  const protocol = new URL(value).protocol;
-  return protocol === "https:" || protocol === "http:";
-}, "Source URLs must use HTTP or HTTPS");
+  const url = new URL(value);
+  return (
+    (url.protocol === "https:" || url.protocol === "http:") &&
+    url.username.length === 0 &&
+    url.password.length === 0
+  );
+}, "Source URLs must use HTTP or HTTPS and must not contain credentials");
 
 const sourceSchema = z.object({
   id: z.string().trim().regex(/^[a-z0-9][a-z0-9-]*$/),

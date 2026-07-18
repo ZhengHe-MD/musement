@@ -53,6 +53,32 @@ sources:
     });
   });
 
+  it("rejects credentials embedded in source URLs", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "musement.yaml");
+    await writeFile(
+      path,
+      `version: 1
+timezone: Asia/Shanghai
+attention_budget_minutes: 25
+interest_profile:
+  enduring: []
+  current: []
+  soft_suppressions: []
+sources:
+  - id: credentialed
+    name: Credentialed
+    kind: rss
+    url: https://user:secret@example.com/feed.xml
+`,
+    );
+
+    await expect(loadConfiguration(path)).rejects.toThrow(
+      "must not contain credentials",
+    );
+  });
+
   it("rejects configuration without a usable public source", async () => {
     const directory = await mkdtemp(join(tmpdir(), "musement-config-"));
     temporaryDirectories.push(directory);

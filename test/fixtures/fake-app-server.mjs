@@ -74,10 +74,17 @@ input.on("line", (line) => {
       id: message.id,
       result: { turn: { id: "fixture-turn", status: "inProgress" } },
     });
-    if (process.env.FAKE_CODEX_TOOL_USE === "1") {
+    if (
+      process.env.FAKE_CODEX_TOOL_USE === "1" ||
+      process.env.FAKE_CODEX_ITEM_TYPE
+    ) {
       send({
         method: "item/started",
-        params: { item: { type: "commandExecution" } },
+        params: {
+          item: {
+            type: process.env.FAKE_CODEX_ITEM_TYPE ?? "commandExecution",
+          },
+        },
       });
     }
     send({

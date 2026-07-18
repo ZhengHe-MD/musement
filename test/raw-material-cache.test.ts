@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -36,6 +36,22 @@ describe("Raw Material Cache", () => {
 
     clock.current = new Date("2026-07-26T00:00:00.000Z");
     expect(await cache.get("https://example.com/feed")).toBeNull();
+  });
+
+  it("sweeps expired entries even when their URLs are never read again", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-cache-"));
+    temporaryDirectories.push(directory);
+    const clock = new MutableClock(new Date("2026-07-18T00:00:00Z"));
+    const cache = new RawMaterialCache({
+      directory,
+      defaultRetentionDays: 1,
+      clock,
+    });
+    await cache.put("https://example.com/removed-source", "raw text");
+    clock.current = new Date("2026-07-20T00:00:00Z");
+
+    expect(await cache.sweepExpired()).toBe(1);
+    await expect(readdir(directory)).resolves.toEqual([]);
   });
 });
 

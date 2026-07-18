@@ -84,6 +84,7 @@ class DateBasedEditor implements EditionEditor {
             evidenceStatus: "Supported.",
             recommendedMaterial: {
               id: `material-${request.localDate}-${role}`,
+              fingerprint: `material-${request.localDate}-${role}`.padEnd(64, "0"),
               title: "Recommended Material",
               author: "Author",
               source: "Source",

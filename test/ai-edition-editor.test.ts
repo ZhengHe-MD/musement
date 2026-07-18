@@ -39,6 +39,16 @@ describe("AI-assisted editorial selection", () => {
           "material-wildcard",
         ),
       ],
+      candidate_assessments: [
+        assessment("policy-change", ["material-important", "material-important-analysis"]),
+        assessment("animal-cognition", ["material-interesting"]),
+        assessment("ancient-pigments", ["material-wildcard"]),
+      ],
+      shortlists: [
+        { role: "important", discovery_keys: ["policy-change"] },
+        { role: "personally-interesting", discovery_keys: ["animal-cognition"] },
+        { role: "wildcard", discovery_keys: ["ancient-pigments"] },
+      ],
       decisions: ["Selected distinct topics with adequate evidence."],
     });
     const editor = new AiEditionEditor({
@@ -50,6 +60,8 @@ describe("AI-assisted editorial selection", () => {
     const draft = await editor.generate({
       localDate: "2026-07-18",
       excludedDiscoveryIds: [],
+      priorExposures: [],
+      feedbackEvidence: [],
     });
 
     expect(draft.slots.map((slot) => [slot.role, slot.status])).toEqual([
@@ -114,6 +126,7 @@ function material(id: string, title: string): CollectedMaterial {
       "https://example.com/feed.xml",
       `https://example.com/${id}`,
     ],
+    referencedUrls: [],
   };
 }
 
@@ -144,6 +157,21 @@ function selection(
     meaningful_entry: "Read the opening explanation and evidence section.",
     meaningful_entry_minutes: 8,
     uncertainty: null,
+  };
+}
+
+function assessment(discoveryKey: string, materialIds: string[]) {
+  return {
+    discovery_key: discoveryKey,
+    title: discoveryKey.replaceAll("-", " "),
+    material_ids: materialIds,
+    evidence_status: "Supported by supplied Materials.",
+    uncertainty: null,
+    role_assessments: [
+      { role: "important", eligible: true, rationale: "Assessed for importance." },
+      { role: "personally-interesting", eligible: true, rationale: "Assessed for curiosity fit." },
+      { role: "wildcard", eligible: true, rationale: "Assessed for exploratory value." },
+    ],
   };
 }
 

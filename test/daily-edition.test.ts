@@ -180,6 +180,7 @@ function filledSlot(
       evidenceStatus: "Supported by the recommended material.",
       recommendedMaterial: {
         id: `material-${discoveryId}`,
+        fingerprint: `material-${discoveryId}`.padEnd(64, "0"),
         title: `${title}: the material`,
         author: "Example Author",
         source: "Example Source",
