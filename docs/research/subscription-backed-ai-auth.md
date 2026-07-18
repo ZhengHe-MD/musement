@@ -50,7 +50,7 @@ For the personal-local first version:
 - If avoiding incremental API cost is important, implement one optional local delegated-runtime adapter. Prefer Codex app server plus ChatGPT managed OAuth because its application and OAuth contracts are more explicit than Anthropic's currently changing subscription-backed Agent SDK policy.
 - Store no password and do not copy credentials from another application's files. Let the provider runtime own browser login, refresh, logout, and secure storage.
 - Show the active authentication and billing mode in diagnostics so a user can tell subscription usage from API-key usage.
-- Treat subscription rate limits as a normal degraded state: pause and retry later rather than silently switching to paid API usage.
+- Treat subscription rate limits as a retryable dependency failure: pause and retry later rather than creating a Degraded Edition or silently switching to paid API usage.
 
 For a multi-user or hosted version:
 

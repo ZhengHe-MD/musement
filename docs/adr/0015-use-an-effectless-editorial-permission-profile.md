@@ -1,0 +1,3 @@
+# Use an effectless editorial permission profile
+
+Codex app-server structured turns expose built-in agent tools and do not currently provide a tool-less inference flag, so the MVP preserves the content-safety intent with a custom `musement-editorial` permission profile that grants no filesystem or network access. Editorial threads are ephemeral, have no workspace roots, use `approvalPolicy: never`, disable apps, plugins, MCP servers, and dynamic tools, and reject the entire Generation Attempt if any tool-use item appears. This supersedes the tool-less-call mechanism named in ADR 0012 while preserving its invariant: Untrusted Material can produce neither an authorized external effect nor an accepted result through tool use.
