@@ -60,6 +60,7 @@ const roleAssessmentSchema = z.object({
 
 const candidateAssessmentSchema = z.object({
   discovery_key: z.string().trim().min(1),
+  topic_key: z.string().trim().min(1),
   title: z.string().trim().min(1),
   material_ids: z.array(z.string().trim().min(1)).min(1),
   evidence_status: z.string().trim().min(1),
@@ -324,6 +325,11 @@ function validateEditorialResponse(
   const filledSelectionTitles = response.slots.flatMap((slot) =>
     slot.status === "filled" ? [slot.title] : [],
   );
+  const filledTopicKeys = new Set(
+    response.slots.flatMap((slot) =>
+      slot.status === "filled" ? [normalizeKey(slot.topic_key)] : [],
+    ),
+  );
   for (const slot of response.slots) {
     if (slot.status === "unavailable") {
       const justifiedCandidate = response.candidate_assessments.find(
@@ -332,6 +338,7 @@ function validateEditorialResponse(
           !filledSelectionTitles.some((title) =>
             titlesLikelyOverlap(title, assessment.title),
           ) &&
+          !filledTopicKeys.has(normalizeKey(assessment.topic_key)) &&
           assessment.role_assessments.find((item) => item.role === slot.role)
             ?.eligible === true,
       );
@@ -354,6 +361,9 @@ function validateEditorialResponse(
     const roleAssessment = assessment?.role_assessments.find(
       (item) => item.role === slot.role,
     );
+    if (normalizeKey(assessment?.topic_key ?? "") !== normalizeKey(slot.topic_key)) {
+      throw new Error("Editorial selection did not match its assessed topic.");
+    }
     const shortlist = response.shortlists.find((item) => item.role === slot.role);
     if (roleAssessment?.eligible !== true) {
       throw new Error(`Editorial selection was not eligible for ${slot.role}.`);

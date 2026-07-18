@@ -40,9 +40,9 @@ describe("AI-assisted editorial selection", () => {
         ),
       ],
       candidate_assessments: [
-        assessment("policy-change", ["material-important", "material-important-analysis"]),
-        assessment("animal-cognition", ["material-interesting"]),
-        assessment("ancient-pigments", ["material-wildcard"]),
+        assessment("policy-change", "public-policy", ["material-important", "material-important-analysis"]),
+        assessment("animal-cognition", "cognitive-science", ["material-interesting"]),
+        assessment("ancient-pigments", "material-culture", ["material-wildcard"]),
       ],
       shortlists: [
         { role: "important", discovery_keys: ["policy-change"] },
@@ -160,9 +160,14 @@ function selection(
   };
 }
 
-function assessment(discoveryKey: string, materialIds: string[]) {
+function assessment(
+  discoveryKey: string,
+  topicKey: string,
+  materialIds: string[],
+) {
   return {
     discovery_key: discoveryKey,
+    topic_key: topicKey,
     title: discoveryKey.replaceAll("-", " "),
     material_ids: materialIds,
     evidence_status: "Supported by supplied Materials.",
