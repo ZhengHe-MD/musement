@@ -78,6 +78,7 @@ class DateBasedEditor implements EditionEditor {
           status: "filled" as const,
           discovery: {
             id: `${request.localDate}-${role}`,
+            subjectKey: `${request.localDate}-${role}`,
             subjectTerms: [`${request.localDate}-${role}`],
             title: `${request.localDate} ${role}`,
             summary: "A worthwhile Discovery.",

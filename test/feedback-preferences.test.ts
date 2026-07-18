@@ -80,6 +80,7 @@ class FeedbackFixtureEditor implements EditionEditor {
           status: "filled",
           discovery: {
             id: "feedback-discovery",
+            subjectKey: "feedback-discovery",
             subjectTerms: ["feedback", "topic"],
             title: "A topic that was not useful",
             summary: "A summary.",

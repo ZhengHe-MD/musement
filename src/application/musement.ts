@@ -390,6 +390,7 @@ function assertValidDraft(
       );
     }
     const repeatedSubject = priorExposures.find((exposure) =>
+      slot.discovery.subjectKey === exposure.subjectKey ||
       termsLikelySameSubject(slot.discovery.subjectTerms, exposure.subjectTerms),
     );
     if (repeatedSubject !== undefined) {

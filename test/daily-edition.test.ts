@@ -174,6 +174,7 @@ function filledSlot(
     status: "filled" as const,
     discovery: {
       id: discoveryId,
+      subjectKey: discoveryId,
       subjectTerms: [discoveryId],
       title,
       summary: `${title} explained in one sentence.`,

@@ -56,6 +56,7 @@ export interface CollectedMaterial {
 
 export interface SelectedDiscovery {
   id: string;
+  subjectKey: string;
   subjectTerms: string[];
   title: string;
   summary: string;
@@ -225,6 +226,7 @@ export interface GenerateEditionRequest {
 
 export interface ExposureEvidence {
   discoveryId: string;
+  subjectKey: string;
   title: string;
   materialFingerprints: string[];
   subjectTerms: string[];

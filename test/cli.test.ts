@@ -120,6 +120,7 @@ class FixtureEditor implements EditionEditor {
           status: "filled",
           discovery: {
             id: "one",
+            subjectKey: "one",
             subjectTerms: ["worthwhile", "discovery"],
             title: "One worthwhile Discovery",
             summary: "A compact explanation of what it is.",
