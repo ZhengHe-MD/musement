@@ -88,8 +88,28 @@ describe("AI-assisted editorial selection", () => {
       ]),
     );
     expect(provider.lastRequest?.prompt).not.toContain("Too short.");
+    expect(findKeywordPaths(provider.lastRequest?.outputSchema, "oneOf")).toEqual(
+      [],
+    );
   });
 });
+
+function findKeywordPaths(
+  value: unknown,
+  keyword: string,
+  path = "$",
+): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) =>
+      findKeywordPaths(item, keyword, `${path}[${index}]`),
+    );
+  }
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([key, child]) => [
+    ...(key === keyword ? [`${path}.${key}`] : []),
+    ...findKeywordPaths(child, keyword, `${path}.${key}`),
+  ]);
+}
 
 class FixtureStructuredProvider {
   lastRequest: StructuredCompletionRequest | null = null;

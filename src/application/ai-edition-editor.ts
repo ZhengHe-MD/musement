@@ -548,4 +548,21 @@ function titlesLikelyOverlap(left: string, right: string): boolean {
 }
 
 const { $schema: _schemaDialect, ...editorialOutputSchema } =
-  z.toJSONSchema(editorialResponseSchema);
+  codexCompatibleSchema(z.toJSONSchema(editorialResponseSchema));
+
+function codexCompatibleSchema(
+  value: Record<string, unknown>,
+): Record<string, unknown> {
+  return rewriteSchemaNode(value) as Record<string, unknown>;
+}
+
+function rewriteSchemaNode(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(rewriteSchemaNode);
+  if (typeof value !== "object" || value === null) return value;
+
+  const rewritten: Record<string, unknown> = {};
+  for (const [key, child] of Object.entries(value)) {
+    rewritten[key === "oneOf" ? "anyOf" : key] = rewriteSchemaNode(child);
+  }
+  return rewritten;
+}
