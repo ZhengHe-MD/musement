@@ -96,7 +96,7 @@ export class AiEditionEditor implements EditionEditor {
 
   async generate(request: GenerateEditionRequest): Promise<DailyEditionDraft> {
     const tokenUsages: GenerationTokenUsage[] = [];
-    let completedSelections = 0;
+    let completedProviderCalls = 0;
     let collected = await this.#collector.collect(this.#configuration.sources);
     const priorFingerprints = new Set(
       request.priorExposures.flatMap((item) => item.materialFingerprints),
@@ -114,7 +114,7 @@ export class AiEditionEditor implements EditionEditor {
         effort: "high",
       };
       const completion = await this.#provider.completeStructured<unknown>(completionRequest);
-      completedSelections += 1;
+      completedProviderCalls += 1;
       if (completion.trace.tokenUsage !== undefined) {
         tokenUsages.push(completion.trace.tokenUsage);
       }
@@ -179,7 +179,7 @@ export class AiEditionEditor implements EditionEditor {
           model: completion.trace.model,
           promptVersion: "daily-edition-v1",
           schemaVersion: "1",
-          ...(tokenUsages.length === completedSelections
+          ...(tokenUsages.length === completedProviderCalls
             ? { tokenUsage: sumTokenUsage(tokenUsages) }
             : {}),
         },
