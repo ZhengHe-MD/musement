@@ -95,6 +95,44 @@ describe("Musement CLI", () => {
     expect(html).not.toContain("<script>");
   });
 
+  it("emits a standalone, safe HTML Selection Trace on demand", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-trace-html-"));
+    temporaryDirectories.push(directory);
+
+    await runCli(["node", "musement", "today"], {
+      stdout: () => undefined,
+      stderr: () => undefined,
+      createRuntime: async () => createFixtureRuntime(directory),
+    });
+
+    const output: string[] = [];
+    await runCli(
+      ["node", "musement", "trace", "2026-07-18", "--html"],
+      {
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+        createRuntime: async () => createFixtureRuntime(directory),
+      },
+    );
+
+    const html = output.join("");
+    expect(html).toMatch(/^<!doctype html>/i);
+    expect(html).toContain(
+      "<title>Musement Selection Trace — 2026-07-18</title>",
+    );
+    expect(html).toContain("fixture-v1");
+    expect(html).toContain("1 candidate");
+    expect(html).toContain("Selected one inspectable candidate.");
+    expect(html).toContain('href="https://example.com/one"');
+    expect(html).toContain(
+      "Candidate &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;",
+    );
+    expect(html).toContain("eligible:coded-quality-floor");
+    expect(html).toContain("Personally Interesting");
+    expect(html).toContain("Raw trace JSON");
+    expect(html).not.toContain("<script>");
+  });
+
   it("reports whether the provider is safe for subscription-backed use", async () => {
     const output: string[] = [];
     const directory = await mkdtemp(join(tmpdir(), "musement-doctor-"));
@@ -188,8 +226,38 @@ class FixtureEditor implements EditionEditor {
         },
       ],
       trace: {
-        candidates: [],
-        decisions: [],
+        candidates: [
+          {
+            materialId: "material-one",
+            title: 'Candidate <script>alert("x")</script>',
+            url: "https://example.com/one",
+            source: { id: "fixture", name: "Fixture Source" },
+            eligible: true,
+            ruleOutcomes: ["eligible:coded-quality-floor"],
+          },
+        ],
+        assessments: [
+          {
+            discovery_key: "one",
+            title: "One worthwhile Discovery",
+            evidence_status: "Supported.",
+            uncertainty: null,
+            role_assessments: [
+              {
+                role: "personally-interesting",
+                eligible: true,
+                rationale: "Matches the declared curiosity profile.",
+              },
+            ],
+          },
+        ],
+        shortlists: [
+          {
+            role: "personally-interesting",
+            discovery_keys: ["one"],
+          },
+        ],
+        decisions: ["Selected one inspectable candidate."],
         provider: {
           name: "fixture",
           model: "fixture-v1",

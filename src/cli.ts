@@ -28,6 +28,7 @@ import { RawMaterialCache } from "./infrastructure/raw-material-cache.js";
 import { SqliteMusementStore } from "./infrastructure/sqlite-musement-store.js";
 import { YamlInterestProfileUpdater } from "./infrastructure/yaml-interest-profile.js";
 import { formatDailyEditionAsHtml } from "./presentation/html-daily-edition.js";
+import { formatSelectionTraceAsHtml } from "./presentation/html-selection-trace.js";
 
 export interface Runtime {
   musement: Musement;
@@ -146,13 +147,18 @@ export async function runCli(
     .command("trace")
     .description("Inspect a Daily Edition's Selection Trace")
     .argument("<date>", "local date in YYYY-MM-DD")
-    .action(async (date: string) => {
+    .option("--html", "print a standalone human-readable HTML document")
+    .action(async (date: string, options: { html?: boolean }) => {
       const runtime = await runtimeForCommand();
       const edition = runtime.musement.edition(date);
       if (edition === null) {
         throw new Error(`No Daily Edition exists for ${date}.`);
       }
-      dependencies.stdout(`${JSON.stringify(edition.trace, null, 2)}\n`);
+      dependencies.stdout(
+        options.html
+          ? formatSelectionTraceAsHtml(date, edition.trace)
+          : `${JSON.stringify(edition.trace, null, 2)}\n`,
+      );
     });
 
   program
