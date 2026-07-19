@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 
 import type { DailyEditionEmailSender } from "../application/daily-email-delivery.js";
+import { assertGrantedGmailSendScope } from "./gmail-oauth.js";
 
 const execFileAsync = promisify(execFile);
 const keychainService = "com.musement.gmail-oauth";
@@ -16,7 +17,10 @@ const authorizationSchema = z.object({
   emailAddress: z.email(),
 });
 
-const accessTokenSchema = z.object({ access_token: z.string().min(1) });
+const accessTokenSchema = z.object({
+  access_token: z.string().min(1),
+  scope: z.string().min(1),
+});
 const sentMessageSchema = z.object({ id: z.string().min(1) });
 
 export type StoredGmailAuthorization = z.infer<typeof authorizationSchema>;
@@ -41,6 +45,7 @@ export class GmailApiSelfSender implements DailyEditionEmailSender {
     const authorization = await this.#readAuthorization();
     const tokenResponse = await this.#fetcher(authorization.tokenUri, {
       method: "POST",
+      signal: AbortSignal.timeout(30_000),
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
         client_id: authorization.clientId,
@@ -55,6 +60,7 @@ export class GmailApiSelfSender implements DailyEditionEmailSender {
       );
     }
     const token = accessTokenSchema.parse(await tokenResponse.json());
+    assertGrantedGmailSendScope(token.scope);
     const raw = Buffer.from(
       formatHtmlMessage({
         ...message,
@@ -66,6 +72,7 @@ export class GmailApiSelfSender implements DailyEditionEmailSender {
       "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
       {
         method: "POST",
+        signal: AbortSignal.timeout(30_000),
         headers: {
           authorization: `Bearer ${token.access_token}`,
           "content-type": "application/json",

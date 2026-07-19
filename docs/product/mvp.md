@@ -24,7 +24,7 @@ The project owner is the first user and makes the initial success judgment.
 
 ## Runtime Boundary
 
-The first-user MVP runs only on the user's local machine. Configuration, SQLite operational state, cached Material, Daily Editions, and Selection Traces remain local. Network access is limited to retrieving sources and invoking the authenticated AI provider.
+The first-user MVP runs only on the user's local machine. Configuration, SQLite operational state, cached Material, Daily Editions, Selection Traces, and email-delivery receipts remain local. Network access is limited to retrieving sources, invoking the authenticated AI provider, and self-delivering a Daily Edition through the user-authorized Gmail API.
 
 The MVP has no Musement account, hosted backend, cross-device synchronization, or product telemetry.
 
@@ -40,6 +40,7 @@ The MVP has no Musement account, hosted backend, cross-device synchronization, o
 - A configurable Attention Budget and meaningful entry point into Recommended Material.
 - The compact Daily Edition display contract through a headless core and CLI.
 - Explicit and first-view generation commands, with scheduling delegated to an optional external scheduler.
+- Optional HTML self-delivery through a user-installed macOS LaunchAgent and a send-only Gmail OAuth grant.
 - Optional one-tap feedback and confirmed Preference Proposals.
 - Selection Traces and a consumer-neutral `DiscoverySelected` event stream.
 - Codex app server as the single AI provider, using vendor-managed ChatGPT OAuth.
@@ -49,7 +50,7 @@ The MVP has no Musement account, hosted backend, cross-device synchronization, o
 - Weekly review.
 - Authenticated source integrations.
 - Automatic source onboarding, source recommendations, and a source-management interface.
-- Web UI, email delivery, and mobile applications.
+- Web UI and mobile applications.
 - A built-in scheduler or continuously running background service.
 - Additional AI providers or local models.
 - Automated personal-history imports.

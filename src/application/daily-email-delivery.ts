@@ -4,6 +4,7 @@ import {
   readFile,
   rename,
   rm,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -40,6 +41,11 @@ const deliveryStateSchema = z.object({
     }),
   ),
 });
+const lockOwnerSchema = z.object({
+  pid: z.number().int().positive(),
+  createdAt: z.iso.datetime(),
+});
+const maximumLockAgeMilliseconds = 10 * 60_000;
 
 type DeliveryState = z.infer<typeof deliveryStateSchema>;
 
@@ -62,14 +68,7 @@ export class DailyEmailDelivery {
     await mkdir(this.#dataDirectory, { recursive: true, mode: 0o700 });
     await chmod(this.#dataDirectory, 0o700);
     const lockDirectory = resolve(this.#dataDirectory, ".email-delivery.lock");
-    try {
-      await mkdir(lockDirectory);
-    } catch (error) {
-      if (isErrorCode(error, "EEXIST")) {
-        throw new Error("Another Daily Edition email delivery is running.");
-      }
-      throw error;
-    }
+    await acquireLock(lockDirectory);
 
     try {
       const state = await this.#readState();
@@ -119,6 +118,75 @@ export class DailyEmailDelivery {
       mode: 0o600,
     });
     await rename(temporaryPath, path);
+  }
+}
+
+async function acquireLock(lockDirectory: string): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await mkdir(lockDirectory);
+      try {
+        await writeFile(
+          resolve(lockDirectory, "owner.json"),
+          `${JSON.stringify({
+            pid: process.pid,
+            createdAt: new Date().toISOString(),
+          })}\n`,
+          { mode: 0o600 },
+        );
+      } catch (error) {
+        await rm(lockDirectory, { recursive: true, force: true });
+        throw error;
+      }
+      return;
+    } catch (error) {
+      if (
+        isErrorCode(error, "EEXIST") &&
+        attempt === 0 &&
+        (await canReclaimLock(lockDirectory))
+      ) {
+        await rm(lockDirectory, { recursive: true, force: true });
+        continue;
+      }
+      if (isErrorCode(error, "EEXIST")) {
+        throw new Error("Another Daily Edition email delivery is running.");
+      }
+      throw error;
+    }
+  }
+}
+
+async function canReclaimLock(lockDirectory: string): Promise<boolean> {
+  try {
+    const owner = lockOwnerSchema.parse(
+      JSON.parse(await readFile(resolve(lockDirectory, "owner.json"), "utf8")),
+    );
+    return (
+      Date.now() - Date.parse(owner.createdAt) > maximumLockAgeMilliseconds ||
+      !isProcessAlive(owner.pid)
+    );
+  } catch {
+    try {
+      const metadata = await stat(lockDirectory);
+      return Date.now() - metadata.mtimeMs > maximumLockAgeMilliseconds;
+    } catch {
+      return false;
+    }
+  }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isErrorCode(error, "ESRCH")) {
+      return false;
+    }
+    if (isErrorCode(error, "EPERM")) {
+      return true;
+    }
+    throw error;
   }
 }
 

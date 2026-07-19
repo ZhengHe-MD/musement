@@ -91,6 +91,15 @@ export class MacOsDailyScheduler {
   }
 
   async status(): Promise<string> {
+    try {
+      await this.#run("/bin/launchctl", [
+        "print",
+        `gui/${this.#userId}/${launchAgentLabel}`,
+      ]);
+      return "loaded";
+    } catch {
+      // A plist may still exist even when launchd has not loaded the job.
+    }
     const outputPath = resolve(
       this.#homeDirectory,
       "Library/LaunchAgents",
@@ -98,7 +107,7 @@ export class MacOsDailyScheduler {
     );
     try {
       await readFile(outputPath, "utf8");
-      return "installed";
+      return "installed-but-not-loaded";
     } catch (error) {
       if (isErrorCode(error, "ENOENT")) {
         return "not-installed";

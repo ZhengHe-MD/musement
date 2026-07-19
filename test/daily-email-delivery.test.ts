@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,5 +80,32 @@ describe("Daily Edition email delivery", () => {
     await expect(
       delivery.deliver({ localDate: "2026-07-20", html: "edition" }),
     ).resolves.toMatchObject({ status: "delivered", messageId: "gmail-2" });
+  });
+
+  it("reclaims a lock left behind by a dead delivery process", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-delivery-"));
+    temporaryDirectories.push(directory);
+    const lockDirectory = join(directory, ".email-delivery.lock");
+    await mkdir(lockDirectory);
+    await writeFile(
+      join(lockDirectory, "owner.json"),
+      `${JSON.stringify({ pid: 999_999, createdAt: new Date().toISOString() })}\n`,
+    );
+    const delivery = new DailyEmailDelivery({
+      dataDirectory: directory,
+      sender: {
+        send: async () => ({
+          emailAddress: "reader@example.com",
+          messageId: "gmail-after-crash",
+        }),
+      },
+    });
+
+    await expect(
+      delivery.deliver({ localDate: "2026-07-20", html: "edition" }),
+    ).resolves.toMatchObject({
+      status: "delivered",
+      messageId: "gmail-after-crash",
+    });
   });
 });

@@ -71,4 +71,28 @@ describe("macOS Daily Edition scheduling", () => {
       }),
     ).rejects.toThrow("Mac timezone");
   });
+
+  it("distinguishes a loaded job from a plist that is only present on disk", async () => {
+    const homeDirectory = await mkdtemp(join(tmpdir(), "musement-launchd-"));
+    temporaryDirectories.push(homeDirectory);
+    const scheduler = new MacOsDailyScheduler({
+      homeDirectory,
+      userId: 501,
+      executablePath: "/opt/homebrew/bin/musement",
+      run: async (_file, arguments_) => {
+        if (arguments_[0] === "print") {
+          throw new Error("not loaded");
+        }
+      },
+    });
+    const dataDirectory = join(homeDirectory, ".musement");
+    await scheduler.install({
+      time: "08:30",
+      timezone: "Asia/Shanghai",
+      configPath: join(dataDirectory, "config.yaml"),
+      dataDirectory,
+    });
+
+    await expect(scheduler.status()).resolves.toBe("installed-but-not-loaded");
+  });
 });
