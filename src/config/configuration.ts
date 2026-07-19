@@ -31,6 +31,7 @@ const configurationSchema = z.object({
   version: z.literal(1),
   timezone: z.string().refine(isTimezone, "Unknown IANA timezone"),
   attention_budget_minutes: z.number().int().min(5).max(240),
+  provider_timeout_seconds: z.number().int().min(30).max(900).default(300),
   cache_retention_days: z.number().int().min(0).max(30).default(7),
   interest_profile: z.object({
     enduring: z.array(interestStatementSchema),

@@ -349,7 +349,9 @@ export async function createProductionRuntime(options: {
     defaultRetentionDays: configuration.cache_retention_days,
   });
   const collector = new PublicSourceCollector(undefined, cache);
-  const provider = new CodexAppServerProvider();
+  const provider = new CodexAppServerProvider({
+    timeoutMs: configuration.provider_timeout_seconds * 1_000,
+  });
   const editor = new AiEditionEditor({ configuration, collector, provider });
   const musement = new Musement({
     store,
@@ -427,6 +429,7 @@ function initialConfiguration(): string {
 version: 1
 timezone: ${timezone}
 attention_budget_minutes: 25
+provider_timeout_seconds: 300
 cache_retention_days: 7
 
 interest_profile:

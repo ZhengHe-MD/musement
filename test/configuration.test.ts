@@ -45,6 +45,7 @@ sources:
     const configuration = await loadConfiguration(path);
 
     expect(configuration.attention_budget_minutes).toBe(25);
+    expect(configuration.provider_timeout_seconds).toBe(300);
     expect(configuration.interest_profile.enduring[0]?.label).toBe("Physics");
     expect(configuration.sources[0]).toMatchObject({
       id: "example-feed",

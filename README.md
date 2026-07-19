@@ -18,6 +18,8 @@ node dist/cli.js init
 
 Edit `musement.yaml` before generating an edition. Replace the example source, add deliberate Enduring and Current Interest statements, and adjust the Attention Budget. Configuration remains human-readable; operational state is stored under `.musement/`.
 
+Editorial generation can take several minutes because it uses high-effort reasoning. `provider_timeout_seconds` defaults to 300 and may be set between 30 and 900 seconds in `musement.yaml`; increasing it changes only how long Musement waits and does not change provider billing or authentication.
+
 Verify the subscription-backed provider separately:
 
 ```sh

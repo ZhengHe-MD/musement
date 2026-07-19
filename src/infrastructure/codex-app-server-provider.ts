@@ -416,7 +416,12 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
       promise,
       new Promise<never>((_resolve, reject) => {
         timeout = setTimeout(
-          () => reject(new Error("Codex app-server request timed out.")),
+          () =>
+            reject(
+              new Error(
+                `Codex app-server request timed out after ${Math.ceil(timeoutMs / 1_000)} seconds.`,
+              ),
+            ),
           timeoutMs,
         );
       }),
