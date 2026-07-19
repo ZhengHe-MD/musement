@@ -20,6 +20,140 @@ afterEach(async () => {
 });
 
 describe("Musement CLI", () => {
+  it("authorizes self-delivery through a user-selected Gmail account", async () => {
+    const output: string[] = [];
+    const authorizationRequests: string[] = [];
+
+    await runCli(
+      [
+        "node",
+        "musement",
+        "gmail-auth",
+        "--credentials",
+        "/tmp/google-desktop-client.json",
+      ],
+      {
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+        createRuntime: async () => {
+          throw new Error("gmail-auth must not start the editorial runtime");
+        },
+        authorizeGmail: async ({ credentialsPath }) => {
+          authorizationRequests.push(credentialsPath);
+          return { emailAddress: "reader@example.com" };
+        },
+      },
+    );
+
+    expect(authorizationRequests).toEqual([
+      "/tmp/google-desktop-client.json",
+    ]);
+    expect(output.join("")).toBe(
+      "Gmail authorized for self-delivery as reader@example.com.\n",
+    );
+  });
+
+  it("delivers today's canonical Edition Review by email", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-deliver-cli-"));
+    temporaryDirectories.push(directory);
+    const output: string[] = [];
+    const deliveries: Array<{
+      localDate: string;
+      html: string;
+      dataDirectory: string;
+    }> = [];
+
+    await runCli(
+      ["node", "musement", "--data-dir", directory, "deliver"],
+      {
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+        createRuntime: async () => createFixtureRuntime(directory),
+        deliverEdition: async (request) => {
+          deliveries.push(request);
+          return {
+            status: "delivered",
+            emailAddress: "reader@example.com",
+            messageId: "gmail-message-1",
+          };
+        },
+      },
+    );
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      localDate: "2026-07-18",
+      dataDirectory: directory,
+    });
+    expect(deliveries[0]?.html).toMatch(/^<!doctype html>/i);
+    expect(output.join("")).toBe(
+      "Delivered the 2026-07-18 Daily Edition to reader@example.com.\n",
+    );
+  });
+
+  it("installs the daily schedule without starting the editorial runtime", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-schedule-cli-"));
+    temporaryDirectories.push(directory);
+    const configPath = join(directory, "config.yaml");
+    await runCli(
+      ["node", "musement", "--config", configPath, "init"],
+      {
+        stdout: () => undefined,
+        stderr: () => undefined,
+        createRuntime: async () => {
+          throw new Error("init must not start the runtime");
+        },
+      },
+    );
+    const installs: unknown[] = [];
+    const output: string[] = [];
+
+    await runCli(
+      [
+        "node",
+        "musement",
+        "--config",
+        configPath,
+        "--data-dir",
+        directory,
+        "schedule",
+        "install",
+        "--time",
+        "08:30",
+      ],
+      {
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+        createRuntime: async () => {
+          throw new Error("schedule install must not start the runtime");
+        },
+        createScheduler: () => ({
+          install: async (options) => {
+            installs.push(options);
+            return {
+              plistPath: "/tmp/com.musement.daily.plist",
+              logDirectory: "/tmp/musement-logs",
+            };
+          },
+          status: async () => "installed",
+          remove: async () => undefined,
+        }),
+      },
+    );
+
+    expect(installs).toEqual([
+      {
+        time: "08:30",
+        timezone: "Asia/Shanghai",
+        configPath,
+        dataDirectory: directory,
+      },
+    ]);
+    expect(output.join("")).toContain(
+      "Installed daily delivery at 08:30 Asia/Shanghai.",
+    );
+  });
+
   it("initializes an editable first-user configuration", async () => {
     const directory = await mkdtemp(join(tmpdir(), "musement-init-"));
     temporaryDirectories.push(directory);

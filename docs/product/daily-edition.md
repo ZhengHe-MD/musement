@@ -6,6 +6,8 @@ Musement produces one canonical Daily Edition for each day in the user's local t
 
 The MVP does not run its own scheduler or background service. An explicit CLI command may generate today's edition, and asking to view today generates it when none exists. Users may later invoke the same generation command with an external scheduler such as `cron` or `launchd`; this does not change the edition lifecycle.
 
+An optional Daily Edition Delivery may present the canonical edition through a user-chosen surface. The first delivery adapter sends the standalone Edition Review from a user-authorized Gmail account back to that same account. Delivery is presentation, not a newsletter subscription or unread queue: one successfully recorded delivery is not sent again, delivery failures create no user-facing debt or pressure, and a failed delivery never changes the immutable edition. A network failure after Gmail accepts a message but before local receipt recording may cause a duplicate retry; Musement prefers this narrow possibility over requesting Gmail read access solely for remote deduplication.
+
 Before an edition exists, each run is a retryable Generation Attempt. Provider unavailability, authentication failure, exhausted subscription limits, or other infrastructure failures leave the attempt pending or failed with a reason; they do not create or freeze a Daily Edition. Musement retries after the dependency becomes available, including on first access.
 
 ## Selection Slots

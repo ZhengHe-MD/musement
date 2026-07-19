@@ -8,6 +8,10 @@ Musement is a personal knowledge-exploration system that curates a deliberately 
 The one canonical, immutable set of selections for a user's local calendar day. It is produced at the scheduled time or, if that run was missed, on first access, and it does not change when revisited or refreshed.
 _Avoid_: Daily feed, daily queue, refresh
 
+**Daily Edition Delivery**:
+The optional presentation of one canonical Daily Edition through a user-chosen surface such as self-addressed email. Delivery creates no unread queue, reminder pressure, or missed-day debt, and a failed delivery does not change or replace the edition.
+_Avoid_: Newsletter subscription, inbox task, reading reminder
+
 **Generation Attempt**:
 A retryable effort to produce a Daily Edition. A pending or failed attempt is not an edition and records its failure reason without freezing a result for that day.
 _Avoid_: Failed edition, degraded edition, draft edition

@@ -8,6 +8,10 @@ import { pathToFileURL } from "node:url";
 import { Command, Option } from "commander";
 
 import { AiEditionEditor } from "./application/ai-edition-editor.js";
+import {
+  DailyEmailDelivery,
+  type DailyEmailDeliveryResult,
+} from "./application/daily-email-delivery.js";
 import { Musement } from "./application/musement.js";
 import {
   loadConfiguration,
@@ -26,6 +30,9 @@ import {
 } from "./infrastructure/codex-app-server-provider.js";
 import { PublicSourceCollector } from "./infrastructure/public-source-collector.js";
 import { RawMaterialCache } from "./infrastructure/raw-material-cache.js";
+import { authorizeGmailSelfDelivery } from "./infrastructure/gmail-oauth.js";
+import { GmailApiSelfSender } from "./infrastructure/gmail-sender.js";
+import { MacOsDailyScheduler } from "./infrastructure/macos-daily-scheduler.js";
 import { SqliteMusementStore } from "./infrastructure/sqlite-musement-store.js";
 import { YamlInterestProfileUpdater } from "./infrastructure/yaml-interest-profile.js";
 import { formatEditionReviewAsHtml } from "./presentation/html-edition-review.js";
@@ -44,12 +51,35 @@ export interface CliDependencies {
     configPath: string;
     dataDirectory: string;
   }) => Promise<Runtime>;
+  authorizeGmail?: (options: {
+    credentialsPath: string;
+  }) => Promise<{ emailAddress: string }>;
+  deliverEdition?: (options: {
+    localDate: string;
+    html: string;
+    dataDirectory: string;
+  }) => Promise<DailyEmailDeliveryResult>;
+  createScheduler?: () => DailyScheduler;
+}
+
+export interface DailyScheduler {
+  install(options: {
+    time: string;
+    timezone: string;
+    configPath: string;
+    dataDirectory: string;
+  }): Promise<{ plistPath: string; logDirectory: string }>;
+  status(): Promise<string>;
+  remove(): Promise<void>;
 }
 
 const defaultDependencies: CliDependencies = {
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
   createRuntime: createProductionRuntime,
+  authorizeGmail: authorizeGmailSelfDelivery,
+  deliverEdition: deliverEditionByEmail,
+  createScheduler: createProductionScheduler,
 };
 
 export async function runCli(
@@ -77,6 +107,86 @@ export async function runCli(
       "local operational state",
       defaultDataDirectory,
     );
+
+  program
+    .command("gmail-auth")
+    .description("Authorize Gmail to send the Daily Edition to the same account")
+    .requiredOption(
+      "--credentials <path>",
+      "Google OAuth Desktop app credential JSON",
+    )
+    .action(async (options: { credentials: string }) => {
+      const authorize =
+        dependencies.authorizeGmail ?? authorizeGmailSelfDelivery;
+      const result = await authorize({
+        credentialsPath: resolve(options.credentials),
+      });
+      dependencies.stdout(
+        `Gmail authorized for self-delivery as ${result.emailAddress}.\n`,
+      );
+    });
+
+  program
+    .command("deliver")
+    .description("Generate today's Daily Edition and self-deliver it by Gmail")
+    .action(async () => {
+      const runtime = await runtimeForCommand();
+      const edition = await runtime.musement.viewToday();
+      const globalOptions = program.opts<{ dataDir: string }>();
+      const deliver = dependencies.deliverEdition ?? deliverEditionByEmail;
+      const result = await deliver({
+        localDate: edition.localDate,
+        html: formatEditionReviewAsHtml(edition),
+        dataDirectory: resolve(globalOptions.dataDir),
+      });
+      dependencies.stdout(
+        result.status === "delivered"
+          ? `Delivered the ${edition.localDate} Daily Edition to ${result.emailAddress}.\n`
+          : `The ${edition.localDate} Daily Edition was already delivered to ${result.emailAddress}.\n`,
+      );
+    });
+
+  const schedule = program
+    .command("schedule")
+    .description("Manage macOS daily email delivery");
+  schedule
+    .command("install")
+    .description("Install or update the user LaunchAgent")
+    .requiredOption("--time <HH:MM>", "daily local delivery time")
+    .action(async (options: { time: string }) => {
+      const globalOptions = program.opts<{ config: string; dataDir: string }>();
+      const configPath = resolve(globalOptions.config);
+      const dataDirectory = resolve(globalOptions.dataDir);
+      const configuration = await loadConfiguration(configPath);
+      const scheduler =
+        dependencies.createScheduler?.() ?? createProductionScheduler();
+      const installed = await scheduler.install({
+        time: options.time,
+        timezone: configuration.timezone,
+        configPath,
+        dataDirectory,
+      });
+      dependencies.stdout(
+        `Installed daily delivery at ${options.time} ${configuration.timezone}.\nLaunchAgent: ${installed.plistPath}\nLogs: ${installed.logDirectory}\n`,
+      );
+    });
+  schedule
+    .command("status")
+    .description("Show whether the user LaunchAgent is installed")
+    .action(async () => {
+      const scheduler =
+        dependencies.createScheduler?.() ?? createProductionScheduler();
+      dependencies.stdout(`Daily delivery schedule: ${await scheduler.status()}.\n`);
+    });
+  schedule
+    .command("remove")
+    .description("Unload and remove the user LaunchAgent")
+    .action(async () => {
+      const scheduler =
+        dependencies.createScheduler?.() ?? createProductionScheduler();
+      await scheduler.remove();
+      dependencies.stdout("Removed the daily delivery schedule.\n");
+    });
 
   program
     .command("init")
@@ -392,6 +502,25 @@ export async function createProductionRuntime(options: {
     providerDiagnostics: () => provider.diagnostics(),
     close: () => store.close(),
   };
+}
+
+async function deliverEditionByEmail(options: {
+  localDate: string;
+  html: string;
+  dataDirectory: string;
+}): Promise<DailyEmailDeliveryResult> {
+  return new DailyEmailDelivery({
+    dataDirectory: options.dataDirectory,
+    sender: new GmailApiSelfSender(),
+  }).deliver({ localDate: options.localDate, html: options.html });
+}
+
+function createProductionScheduler(): DailyScheduler {
+  const executablePath = process.argv[1];
+  if (executablePath === undefined) {
+    throw new Error("Could not determine the installed Musement executable.");
+  }
+  return new MacOsDailyScheduler({ executablePath });
 }
 
 export function formatDailyEdition(edition: DailyEdition): string {

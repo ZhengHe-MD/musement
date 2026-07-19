@@ -49,6 +49,28 @@ musement outbox --after 0
 
 `today` generates on first access and returns the same frozen edition thereafter. `generate` is an equivalent explicit command suitable for `cron` or `launchd`; Musement has no built-in scheduler.
 
+## Gmail self-delivery on macOS
+
+Create a Google Cloud **Desktop app** OAuth client, enable the Gmail API for that project, and download its credential JSON. Authorize the Gmail account that should act as both sender and receiver:
+
+```sh
+musement gmail-auth --credentials ~/Downloads/client_secret_....json
+```
+
+The command requests identity/email plus the send-only `gmail.send` scope. It stores the resulting authorization in macOS Keychain under `com.musement.gmail-oauth`; tokens are never written to Musement configuration, operational state, logs, or the repository. The downloaded OAuth client JSON remains user-managed and should not be committed.
+
+Test one delivery, then install the user LaunchAgent:
+
+```sh
+musement deliver
+musement schedule install --time 08:30
+musement schedule status
+```
+
+The schedule uses the Mac's timezone and requires it to match `timezone` in `~/.musement/config.yaml`. Logs are written to `~/.musement/logs/`. A successful date is recorded in `~/.musement/email-deliveries.json`, so ordinary reruns report that it was already delivered. Generation, provider, and Gmail failures remain retryable and send no failure email. Remove the job with `musement schedule remove`.
+
+Google OAuth projects with an External audience in **Testing** expire non-basic refresh tokens after seven days. For durable unattended delivery, publish the personal OAuth app to **In production** and authorize again; an unverified personal app may show Google's warning during that one-time authorization.
+
 `today --html` and `generate --html` write a unified Edition Review to stdout: the three encounters first, followed by assembly decisions and the progressively disclosed Selection Trace. The standalone document is responsive, printable, supports English and Chinese interface labels, and contains no scripts or external assets. Collected text is escaped before rendering. `--html` and `--json` are mutually exclusive.
 
 The footer identifies the editorial vendor and model and reports total, input, cached-input, output, and reasoning-output tokens when the provider supplied usage metadata. Editions frozen before token tracking was added remain unchanged and show that token usage was not recorded.
