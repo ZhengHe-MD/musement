@@ -128,6 +128,10 @@ describe("Musement CLI", () => {
       "Candidate &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;",
     );
     expect(html).toContain("eligible:coded-quality-floor");
+    expect(html).toContain("<dt>Material ID</dt><dd><code>material-one</code>");
+    expect(html).toContain("<dt>Discovery key</dt><dd><code>one</code>");
+    expect(html).toContain("<dt>Topic key</dt><dd><code>fixture-topic</code>");
+    expect(html).toContain("<strong>Material IDs:</strong>");
     expect(html).toContain("Personally Interesting");
     expect(html).toContain("Raw trace JSON");
     expect(html).not.toContain("<script>");
@@ -229,6 +233,7 @@ class FixtureEditor implements EditionEditor {
         candidates: [
           {
             materialId: "material-one",
+            fingerprint: "material-one-fingerprint",
             title: 'Candidate <script>alert("x")</script>',
             url: "https://example.com/one",
             source: { id: "fixture", name: "Fixture Source" },
@@ -239,7 +244,9 @@ class FixtureEditor implements EditionEditor {
         assessments: [
           {
             discovery_key: "one",
+            topic_key: "fixture-topic",
             title: "One worthwhile Discovery",
+            material_ids: ["material-one"],
             evidence_status: "Supported.",
             uncertainty: null,
             role_assessments: [

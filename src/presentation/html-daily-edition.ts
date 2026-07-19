@@ -4,6 +4,7 @@ import type {
   SelectionSlotRole,
   UnavailableSelectionSlot,
 } from "../domain/contracts.js";
+import { escapeHtml, formatExternalLink } from "./html-safety.js";
 
 export function formatDailyEditionAsHtml(edition: DailyEdition): string {
   const statusLabel = edition.status === "complete" ? "Complete" : "Degraded";
@@ -190,7 +191,7 @@ function formatFilledSlot(slot: FilledSelectionSlot): string {
   const alternatives = discovery.alternativeMaterials
     .map(
       (alternative) =>
-        `<li>${formatLink(alternative.title, alternative.url)} — ${escapeHtml(alternative.author)}, ${escapeHtml(alternative.source)}</li>`,
+        `<li>${formatExternalLink(alternative.title, alternative.url)} — ${escapeHtml(alternative.author)}, ${escapeHtml(alternative.source)}</li>`,
     )
     .join("");
 
@@ -202,7 +203,7 @@ function formatFilledSlot(slot: FilledSelectionSlot): string {
         <p><span class="detail-label">Evidence:</span> ${escapeHtml(discovery.evidenceStatus)}</p>
         <div class="material">
           <div class="metadata">${escapeHtml(material.author)} · ${escapeHtml(material.source)} · ${escapeHtml(material.format)}</div>
-          <p>${formatLink(material.title, material.url)}</p>
+          <p>${formatExternalLink(material.title, material.url)}</p>
           <p><span class="detail-label">Time:</span> ${material.meaningfulEntryMinutes} min entry · ${material.fullLengthMinutes === null ? "unknown" : `${material.fullLengthMinutes} min`} full</p>
         ${optionalDetails}
           <details>
@@ -228,36 +229,4 @@ function formatRole(role: SelectionSlotRole): string {
     .split("-")
     .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
     .join(" ");
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(
-    /[&<>"']/g,
-    (character) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[character] ?? character,
-  );
-}
-
-function safeHref(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:"
-      ? escapeHtml(value)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function formatLink(title: string, url: string): string {
-  const href = safeHref(url);
-  return href === null
-    ? `<span class="link-unavailable">${escapeHtml(title)} (link unavailable)</span>`
-    : `<a href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`;
 }

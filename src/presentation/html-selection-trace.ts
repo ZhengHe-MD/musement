@@ -1,4 +1,5 @@
 import type { SelectionTrace } from "../domain/contracts.js";
+import { escapeHtml, formatExternalLink } from "./html-safety.js";
 
 export function formatSelectionTraceAsHtml(
   localDate: string,
@@ -36,6 +37,7 @@ export function formatSelectionTraceAsHtml(
     .eyebrow, .label, .badge { font-size: .75rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
     .eyebrow, a { color: var(--accent); }
     a { text-underline-offset: .2em; }
+    .link-unavailable { color: var(--muted); font-weight: 700; }
     .date, .muted { color: var(--muted); }
     .date { text-align: right; }
     .overview { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .8rem; margin-top: 1.25rem; }
@@ -55,6 +57,11 @@ export function formatSelectionTraceAsHtml(
     .record-body { padding: 1rem 1.15rem 1.15rem; }
     .record-body p:first-child { margin-top: 0; }
     .record-body p:last-child { margin-bottom: 0; }
+    .identifiers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .55rem 1rem; margin: 0 0 .9rem; }
+    .identifiers div { min-width: 0; }
+    .identifiers dt { color: var(--muted); font-size: .72rem; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+    .identifiers dd { margin: .15rem 0 0; overflow-wrap: anywhere; }
+    code { font: .82rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; }
     .badge { flex: none; padding: .18rem .5rem; border: 1px solid currentColor; border-radius: 999px; }
     .eligible { color: var(--positive); }
     .ineligible { color: var(--negative); }
@@ -71,6 +78,7 @@ export function formatSelectionTraceAsHtml(
       .date { text-align: left; }
       .overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .role-grid { grid-template-columns: 1fr; }
+      .identifiers { grid-template-columns: 1fr; }
     }
     @media (prefers-color-scheme: dark) {
       :root { --paper: #1c1b18; --panel: #26231f; --ink: #f2ebdd; --muted: #bbb2a4; --line: #4b443a; --accent: #e49a7f; --accent-soft: #56382f; --positive: #84c8aa; --negative: #ee998d; }
@@ -194,6 +202,8 @@ function formatCandidate(value: unknown, index: number): string {
   }
   const title = stringValue(record.title) ?? `Candidate ${index + 1}`;
   const url = stringValue(record.url);
+  const materialId = stringValue(record.materialId);
+  const fingerprint = stringValue(record.fingerprint);
   const source = asRecord(record.source);
   const sourceName = stringValue(source?.name);
   const eligible = typeof record.eligible === "boolean" ? record.eligible : null;
@@ -201,7 +211,7 @@ function formatCandidate(value: unknown, index: number): string {
   const summary = stringValue(record.derivedSummary);
   const titleMarkup = url === undefined
     ? escapeHtml(title)
-    : formatLink(title, url);
+    : formatExternalLink(title, url);
   return `<details class="record">
         <summary><span>${titleMarkup}${sourceName === undefined ? "" : `<span class="muted"> · ${escapeHtml(sourceName)}</span>`}</span>${
           eligible === null
@@ -209,6 +219,10 @@ function formatCandidate(value: unknown, index: number): string {
             : `<span class="badge ${eligible ? "eligible" : "ineligible"}">${eligible ? "Eligible" : "Rejected"}</span>`
         }</summary>
         <div class="record-body">
+          ${formatIdentifiers([
+            ["Material ID", materialId],
+            ["Fingerprint", fingerprint],
+          ])}
           ${summary === undefined ? "" : `<p>${escapeHtml(summary)}</p>`}
           ${outcomes.length === 0 ? '<p class="muted">No coded rule outcomes were recorded.</p>' : `<ul class="tags">${outcomes.map((outcome) => `<li>${escapeHtml(outcome)}</li>`).join("")}</ul>`}
         </div>
@@ -232,6 +246,9 @@ function formatAssessment(value: unknown, index: number): string {
     return formatUnknownRecord(`Assessment ${index + 1}`, value);
   }
   const title = stringValue(record.title) ?? stringValue(record.discovery_key) ?? `Assessment ${index + 1}`;
+  const discoveryKey = stringValue(record.discovery_key);
+  const topicKey = stringValue(record.topic_key);
+  const materialIds = stringArray(record.material_ids);
   const evidenceStatus = stringValue(record.evidence_status);
   const uncertainty = stringValue(record.uncertainty);
   const roleAssessments = Array.isArray(record.role_assessments)
@@ -240,6 +257,11 @@ function formatAssessment(value: unknown, index: number): string {
   return `<details class="record">
         <summary>${escapeHtml(title)}<span class="badge">${roleAssessments.length} ${roleAssessments.length === 1 ? "role" : "roles"}</span></summary>
         <div class="record-body">
+          ${formatIdentifiers([
+            ["Discovery key", discoveryKey],
+            ["Topic key", topicKey],
+          ])}
+          ${materialIds.length === 0 ? "" : `<p><strong>Material IDs:</strong></p><ul class="tags">${materialIds.map((id) => `<li>${escapeHtml(id)}</li>`).join("")}</ul>`}
           ${evidenceStatus === undefined ? "" : `<p><strong>Evidence:</strong> ${escapeHtml(evidenceStatus)}</p>`}
           ${uncertainty === undefined ? "" : `<p><strong>Uncertainty:</strong> ${escapeHtml(uncertainty)}</p>`}
           <div class="role-grid">${roleAssessments.map(formatRoleAssessment).join("")}</div>
@@ -266,6 +288,18 @@ function formatUnknownRecord(label: string, value: unknown): string {
   return `<details class="record"><summary>${escapeHtml(label)}</summary><div class="record-body"><pre>${escapeHtml(JSON.stringify(value, null, 2))}</pre></div></details>`;
 }
 
+function formatIdentifiers(
+  identifiers: Array<readonly [label: string, value: string | undefined]>,
+): string {
+  const available = identifiers.filter(
+    (identifier): identifier is readonly [string, string] =>
+      identifier[1] !== undefined,
+  );
+  return available.length === 0
+    ? ""
+    : `<dl class="identifiers">${available.map(([label, value]) => `<div><dt>${escapeHtml(label)}</dt><dd><code>${escapeHtml(value)}</code></dd></div>`).join("")}</dl>`;
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -287,36 +321,4 @@ function formatLabel(value: string): string {
     .split(/[-_]/)
     .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
     .join(" ");
-}
-
-function formatLink(title: string, url: string): string {
-  const href = safeHref(url);
-  return href === null
-    ? `${escapeHtml(title)} <span class="muted">(link unavailable)</span>`
-    : `<a href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`;
-}
-
-function safeHref(value: string): string | null {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || url.protocol === "http:"
-      ? escapeHtml(value)
-      : null;
-  } catch {
-    return null;
-  }
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(
-    /[&<>"']/g,
-    (character) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[character] ?? character,
-  );
 }
