@@ -27,8 +27,7 @@ import { PublicSourceCollector } from "./infrastructure/public-source-collector.
 import { RawMaterialCache } from "./infrastructure/raw-material-cache.js";
 import { SqliteMusementStore } from "./infrastructure/sqlite-musement-store.js";
 import { YamlInterestProfileUpdater } from "./infrastructure/yaml-interest-profile.js";
-import { formatDailyEditionAsHtml } from "./presentation/html-daily-edition.js";
-import { formatSelectionTraceAsHtml } from "./presentation/html-selection-trace.js";
+import { formatEditionReviewAsHtml } from "./presentation/html-edition-review.js";
 
 export interface Runtime {
   musement: Musement;
@@ -99,7 +98,7 @@ export async function runCli(
     const edition = await runtime.musement.viewToday();
     dependencies.stdout(
       options.html
-        ? formatDailyEditionAsHtml(edition)
+        ? formatEditionReviewAsHtml(edition)
         : options.json
         ? `${JSON.stringify(edition, null, 2)}\n`
         : formatDailyEdition(edition),
@@ -156,7 +155,7 @@ export async function runCli(
       }
       dependencies.stdout(
         options.html
-          ? formatSelectionTraceAsHtml(date, edition.trace)
+          ? formatEditionReviewAsHtml(edition)
           : `${JSON.stringify(edition.trace, null, 2)}\n`,
       );
     });

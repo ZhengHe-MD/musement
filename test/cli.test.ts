@@ -71,7 +71,7 @@ describe("Musement CLI", () => {
 
   });
 
-  it("emits a standalone, safe HTML Daily Edition on demand", async () => {
+  it("emits a standalone, safe, bilingual Edition Review on demand", async () => {
     const directory = await mkdtemp(join(tmpdir(), "musement-html-"));
     temporaryDirectories.push(directory);
     const output: string[] = [];
@@ -84,23 +84,37 @@ describe("Musement CLI", () => {
 
     const html = output.join("");
     expect(html).toMatch(/^<!doctype html>/i);
-    expect(html).toContain("<title>Musement — 2026-07-18</title>");
+    expect(html).toContain(
+      "<title>Musement Edition Review — 2026-07-18</title>",
+    );
+    expect(html).toContain("Today’s three encounters");
+    expect(html).toContain("今日三则邂逅");
+    expect(html).toContain("Why this edition");
+    expect(html).toContain("为何是这一份");
+    expect(html).toContain("Selected one inspectable candidate.");
+    expect(html).toContain("1 candidate");
+    expect(html).toContain("Raw trace");
     expect(html).toContain('href="https://example.com/one"');
     expect(html).toContain("Personally Interesting");
     expect(html).toContain("No candidate met the quality floor.");
-    expect(html).toContain("Personally Interesting — Unavailable</h2>");
+    expect(html).toContain('id="personally-interesting-unavailable-title"');
+    expect(html).toContain('href="#assessment-one"');
+    expect(html).toContain('id="assessment-one"');
+    expect(html).toContain("Unavailable");
     expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
     expect(html).toContain("Unsafe alternative (link unavailable)");
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("<script>");
+    expect(html).not.toContain("fonts.googleapis.com");
   });
 
   it("emits a standalone, safe HTML Selection Trace on demand", async () => {
     const directory = await mkdtemp(join(tmpdir(), "musement-trace-html-"));
     temporaryDirectories.push(directory);
 
-    await runCli(["node", "musement", "today"], {
-      stdout: () => undefined,
+    const todayOutput: string[] = [];
+    await runCli(["node", "musement", "today", "--html"], {
+      stdout: (text) => todayOutput.push(text),
       stderr: () => undefined,
       createRuntime: async () => createFixtureRuntime(directory),
     });
@@ -118,8 +132,11 @@ describe("Musement CLI", () => {
     const html = output.join("");
     expect(html).toMatch(/^<!doctype html>/i);
     expect(html).toContain(
-      "<title>Musement Selection Trace — 2026-07-18</title>",
+      "<title>Musement Edition Review — 2026-07-18</title>",
     );
+    expect(html).toBe(todayOutput.join(""));
+    expect(html).toContain("One worthwhile Discovery");
+    expect(html).toContain("No candidate met the quality floor.");
     expect(html).toContain("fixture-v1");
     expect(html).toContain("1 candidate");
     expect(html).toContain("Selected one inspectable candidate.");
@@ -128,12 +145,14 @@ describe("Musement CLI", () => {
       "Candidate &lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;",
     );
     expect(html).toContain("eligible:coded-quality-floor");
-    expect(html).toContain("<dt>Material ID</dt><dd><code>material-one</code>");
-    expect(html).toContain("<dt>Discovery key</dt><dd><code>one</code>");
-    expect(html).toContain("<dt>Topic key</dt><dd><code>fixture-topic</code>");
-    expect(html).toContain("<strong>Material IDs:</strong>");
+    expect(html).toContain("Material ID");
+    expect(html).toContain("<code>material-one</code>");
+    expect(html).toContain("Discovery key");
+    expect(html).toContain("<code>one</code>");
+    expect(html).toContain("Topic key");
+    expect(html).toContain("<code>fixture-topic</code>");
     expect(html).toContain("Personally Interesting");
-    expect(html).toContain("Raw trace JSON");
+    expect(html).toContain("Raw trace");
     expect(html).not.toContain("<script>");
   });
 
@@ -185,7 +204,7 @@ class FixtureEditor implements EditionEditor {
           role: "important",
           status: "filled",
           discovery: {
-            id: "one",
+            id: "discovery-one-hash",
             subjectKey: "one",
             subjectTerms: ["worthwhile", "discovery"],
             title: 'One worthwhile Discovery <script>alert("x")</script>',
