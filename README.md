@@ -34,6 +34,8 @@ npm run provider:smoke
 
 ```sh
 node dist/cli.js today
+node dist/cli.js today --html > daily-edition.html
+open daily-edition.html # macOS
 node dist/cli.js trace 2026-07-18
 node dist/cli.js feedback 2026-07-18 --slot important --kind good-pick
 node dist/cli.js select 2026-07-18 --slot important
@@ -41,6 +43,8 @@ node dist/cli.js outbox --after 0
 ```
 
 `today` generates on first access and returns the same frozen edition thereafter. `generate` is an equivalent explicit command suitable for `cron` or `launchd`; Musement has no built-in scheduler.
+
+`today --html` and `generate --html` write a standalone, responsive, printable HTML document to stdout. Redirect it to any filename and open it in a browser. The document contains no scripts or external assets; collected text is escaped before rendering. `--html` and `--json` are mutually exclusive.
 
 Topic-level `not-useful` feedback creates a pending Soft Suppression proposal. Review and resolve proposals explicitly:
 

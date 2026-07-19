@@ -71,6 +71,27 @@ describe("Musement CLI", () => {
 
   });
 
+  it("emits a standalone, safe HTML Daily Edition on demand", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-html-"));
+    temporaryDirectories.push(directory);
+    const output: string[] = [];
+
+    await runCli(["node", "musement", "today", "--html"], {
+      stdout: (text) => output.push(text),
+      stderr: () => undefined,
+      createRuntime: async () => createFixtureRuntime(directory),
+    });
+
+    const html = output.join("");
+    expect(html).toMatch(/^<!doctype html>/i);
+    expect(html).toContain("<title>Musement — 2026-07-18</title>");
+    expect(html).toContain('href="https://example.com/one"');
+    expect(html).toContain("Personally Interesting");
+    expect(html).toContain("No candidate met the quality floor.");
+    expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+    expect(html).not.toContain("<script>");
+  });
+
   it("reports whether the provider is safe for subscription-backed use", async () => {
     const output: string[] = [];
     const directory = await mkdtemp(join(tmpdir(), "musement-doctor-"));
@@ -122,7 +143,7 @@ class FixtureEditor implements EditionEditor {
             id: "one",
             subjectKey: "one",
             subjectTerms: ["worthwhile", "discovery"],
-            title: "One worthwhile Discovery",
+            title: 'One worthwhile Discovery <script>alert("x")</script>',
             summary: "A compact explanation of what it is.",
             slotReason: "It has meaningful consequences.",
             evidenceStatus: "Supported.",

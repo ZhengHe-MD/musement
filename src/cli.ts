@@ -27,6 +27,7 @@ import { PublicSourceCollector } from "./infrastructure/public-source-collector.
 import { RawMaterialCache } from "./infrastructure/raw-material-cache.js";
 import { SqliteMusementStore } from "./infrastructure/sqlite-musement-store.js";
 import { YamlInterestProfileUpdater } from "./infrastructure/yaml-interest-profile.js";
+import { formatDailyEditionAsHtml } from "./presentation/html-daily-edition.js";
 
 export interface Runtime {
   musement: Musement;
@@ -92,11 +93,13 @@ export async function runCli(
       dependencies.stdout(`Created ${configPath}\n`);
     });
 
-  const todayAction = async (options: { json?: boolean }) => {
+  const todayAction = async (options: { html?: boolean; json?: boolean }) => {
     const runtime = await runtimeForCommand();
     const edition = await runtime.musement.viewToday();
     dependencies.stdout(
-      options.json
+      options.html
+        ? formatDailyEditionAsHtml(edition)
+        : options.json
         ? `${JSON.stringify(edition, null, 2)}\n`
         : formatDailyEdition(edition),
     );
@@ -118,13 +121,15 @@ export async function runCli(
   program
     .command("today")
     .description("View today's canonical Daily Edition, generating it if absent")
-    .option("--json", "print stable machine-readable JSON")
+    .addOption(new Option("--json", "print stable machine-readable JSON").conflicts("html"))
+    .addOption(new Option("--html", "print a standalone human-readable HTML document").conflicts("json"))
     .action(todayAction);
 
   program
     .command("generate")
     .description("Generate today's Daily Edition if absent")
-    .option("--json", "print stable machine-readable JSON")
+    .addOption(new Option("--json", "print stable machine-readable JSON").conflicts("html"))
+    .addOption(new Option("--html", "print a standalone human-readable HTML document").conflicts("json"))
     .action(todayAction);
 
   program
