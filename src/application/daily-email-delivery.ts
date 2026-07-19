@@ -1,12 +1,6 @@
-import {
-  chmod,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { z } from "zod";
@@ -41,11 +35,6 @@ const deliveryStateSchema = z.object({
     }),
   ),
 });
-const lockOwnerSchema = z.object({
-  pid: z.number().int().positive(),
-  createdAt: z.iso.datetime(),
-});
-const maximumLockAgeMilliseconds = 10 * 60_000;
 
 type DeliveryState = z.infer<typeof deliveryStateSchema>;
 
@@ -67,8 +56,8 @@ export class DailyEmailDelivery {
   }): Promise<DailyEmailDeliveryResult> {
     await mkdir(this.#dataDirectory, { recursive: true, mode: 0o700 });
     await chmod(this.#dataDirectory, 0o700);
-    const lockDirectory = resolve(this.#dataDirectory, ".email-delivery.lock");
-    await acquireLock(lockDirectory);
+    const lockPath = resolve(this.#dataDirectory, ".email-delivery.lock");
+    const lock = await acquireLock(lockPath);
 
     try {
       const state = await this.#readState();
@@ -89,7 +78,7 @@ export class DailyEmailDelivery {
       await this.#writeState(state);
       return { status: "delivered", ...sent };
     } finally {
-      await rm(lockDirectory, { recursive: true, force: true });
+      await lock.release();
     }
   }
 
@@ -121,73 +110,46 @@ export class DailyEmailDelivery {
   }
 }
 
-async function acquireLock(lockDirectory: string): Promise<void> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await mkdir(lockDirectory);
-      try {
-        await writeFile(
-          resolve(lockDirectory, "owner.json"),
-          `${JSON.stringify({
-            pid: process.pid,
-            createdAt: new Date().toISOString(),
-          })}\n`,
-          { mode: 0o600 },
-        );
-      } catch (error) {
-        await rm(lockDirectory, { recursive: true, force: true });
-        throw error;
+async function acquireLock(lockPath: string): Promise<{ release(): Promise<void> }> {
+  const helper = spawn(
+    "/usr/bin/lockf",
+    [
+      "-s",
+      "-t",
+      "0",
+      "-k",
+      lockPath,
+      process.execPath,
+      "--input-type=module",
+      "-e",
+      'process.stdout.write("locked\\n"); process.stdin.resume();',
+    ],
+    { stdio: ["pipe", "pipe", "ignore"] },
+  );
+  await new Promise<void>((resolveReady, rejectReady) => {
+    let acquired = false;
+    const reject = () => {
+      if (!acquired) {
+        rejectReady(new Error("Another Daily Edition email delivery is running."));
       }
-      return;
-    } catch (error) {
-      if (
-        isErrorCode(error, "EEXIST") &&
-        attempt === 0 &&
-        (await canReclaimLock(lockDirectory))
-      ) {
-        await rm(lockDirectory, { recursive: true, force: true });
-        continue;
+    };
+    helper.once("error", reject);
+    helper.once("exit", reject);
+    helper.stdout.once("data", () => {
+      acquired = true;
+      resolveReady();
+    });
+  });
+  return {
+    release: async () => {
+      if (helper.exitCode !== null) {
+        return;
       }
-      if (isErrorCode(error, "EEXIST")) {
-        throw new Error("Another Daily Edition email delivery is running.");
-      }
-      throw error;
-    }
-  }
-}
-
-async function canReclaimLock(lockDirectory: string): Promise<boolean> {
-  try {
-    const owner = lockOwnerSchema.parse(
-      JSON.parse(await readFile(resolve(lockDirectory, "owner.json"), "utf8")),
-    );
-    return (
-      Date.now() - Date.parse(owner.createdAt) > maximumLockAgeMilliseconds ||
-      !isProcessAlive(owner.pid)
-    );
-  } catch {
-    try {
-      const metadata = await stat(lockDirectory);
-      return Date.now() - metadata.mtimeMs > maximumLockAgeMilliseconds;
-    } catch {
-      return false;
-    }
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (isErrorCode(error, "ESRCH")) {
-      return false;
-    }
-    if (isErrorCode(error, "EPERM")) {
-      return true;
-    }
-    throw error;
-  }
+      const exited = once(helper, "exit");
+      helper.stdin.end();
+      await exited;
+    },
+  };
 }
 
 function isErrorCode(error: unknown, code: string): boolean {

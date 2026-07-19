@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -85,12 +85,10 @@ describe("Daily Edition email delivery", () => {
   it("reclaims a lock left behind by a dead delivery process", async () => {
     const directory = await mkdtemp(join(tmpdir(), "musement-delivery-"));
     temporaryDirectories.push(directory);
-    const lockDirectory = join(directory, ".email-delivery.lock");
-    await mkdir(lockDirectory);
-    await writeFile(
-      join(lockDirectory, "owner.json"),
-      `${JSON.stringify({ pid: 999_999, createdAt: new Date().toISOString() })}\n`,
-    );
+    const lockPath = join(directory, ".email-delivery.lock");
+    await writeFile(lockPath, "999999\n");
+    const staleTime = new Date(Date.now() - 60_000);
+    await utimes(lockPath, staleTime, staleTime);
     const delivery = new DailyEmailDelivery({
       dataDirectory: directory,
       sender: {
@@ -107,5 +105,48 @@ describe("Daily Edition email delivery", () => {
       status: "delivered",
       messageId: "gmail-after-crash",
     });
+  });
+
+  it("rejects a concurrent delivery while the operating-system lock is held", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-delivery-"));
+    temporaryDirectories.push(directory);
+    let markStarted: () => void = () => undefined;
+    let finishSend: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const sending = new Promise<void>((resolve) => {
+      finishSend = resolve;
+    });
+    const first = new DailyEmailDelivery({
+      dataDirectory: directory,
+      sender: {
+        send: async () => {
+          markStarted();
+          await sending;
+          return { emailAddress: "reader@example.com", messageId: "gmail-1" };
+        },
+      },
+    });
+    const second = new DailyEmailDelivery({
+      dataDirectory: directory,
+      sender: {
+        send: async () => ({
+          emailAddress: "reader@example.com",
+          messageId: "gmail-duplicate",
+        }),
+      },
+    });
+
+    const firstDelivery = first.deliver({
+      localDate: "2026-07-20",
+      html: "edition",
+    });
+    await started;
+    await expect(
+      second.deliver({ localDate: "2026-07-20", html: "edition" }),
+    ).rejects.toThrow("Another Daily Edition email delivery is running");
+    finishSend();
+    await expect(firstDelivery).resolves.toMatchObject({ status: "delivered" });
   });
 });
