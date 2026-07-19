@@ -1,6 +1,7 @@
 import type {
   DailyEdition,
   FilledSelectionSlot,
+  SelectionSlotRole,
   UnavailableSelectionSlot,
 } from "../domain/contracts.js";
 
@@ -107,6 +108,7 @@ export function formatDailyEditionAsHtml(edition: DailyEdition): string {
       border-top: 1px solid var(--line);
     }
     .material a { color: var(--accent); font-weight: 700; text-underline-offset: .2em; }
+    .link-unavailable { color: var(--muted); font-weight: 700; }
     .metadata { color: var(--muted); letter-spacing: .06em; }
     .detail-label { font-weight: 750; }
     .uncertainty { color: var(--muted); }
@@ -132,7 +134,16 @@ export function formatDailyEditionAsHtml(edition: DailyEdition): string {
       }
     }
     @media print {
-      :root { color-scheme: light; }
+      :root {
+        color-scheme: light;
+        --paper: white;
+        --paper-raised: white;
+        --ink: #20201d;
+        --muted: #68645c;
+        --line: #d8cebc;
+        --accent: #9f3f2c;
+        --unavailable: #776f65;
+      }
       body { background: white; }
       .edition { width: 100%; padding: 0; }
       .slot { box-shadow: none; break-inside: avoid; }
@@ -179,7 +190,7 @@ function formatFilledSlot(slot: FilledSelectionSlot): string {
   const alternatives = discovery.alternativeMaterials
     .map(
       (alternative) =>
-        `<li><a href="${safeHref(alternative.url)}" rel="noopener noreferrer">${escapeHtml(alternative.title)}</a> — ${escapeHtml(alternative.author)}, ${escapeHtml(alternative.source)}</li>`,
+        `<li>${formatLink(alternative.title, alternative.url)} — ${escapeHtml(alternative.author)}, ${escapeHtml(alternative.source)}</li>`,
     )
     .join("");
 
@@ -191,7 +202,7 @@ function formatFilledSlot(slot: FilledSelectionSlot): string {
         <p><span class="detail-label">Evidence:</span> ${escapeHtml(discovery.evidenceStatus)}</p>
         <div class="material">
           <div class="metadata">${escapeHtml(material.author)} · ${escapeHtml(material.source)} · ${escapeHtml(material.format)}</div>
-          <p><a href="${safeHref(material.url)}" rel="noopener noreferrer">${escapeHtml(material.title)}</a></p>
+          <p>${formatLink(material.title, material.url)}</p>
           <p><span class="detail-label">Time:</span> ${material.meaningfulEntryMinutes} min entry · ${material.fullLengthMinutes === null ? "unknown" : `${material.fullLengthMinutes} min`} full</p>
         ${optionalDetails}
           <details>
@@ -204,14 +215,15 @@ function formatFilledSlot(slot: FilledSelectionSlot): string {
 }
 
 function formatUnavailableSlot(slot: UnavailableSelectionSlot): string {
-  return `      <section class="slot unavailable">
+  const role = formatRole(slot.role);
+  return `      <section class="slot unavailable" aria-labelledby="${slot.role}-unavailable-title">
         <div class="slot-role">${formatRole(slot.role)}</div>
-        <h2>Unavailable</h2>
+        <h2 id="${slot.role}-unavailable-title">${role} — Unavailable</h2>
         <p>${escapeHtml(slot.reason)}</p>
       </section>`;
 }
 
-function formatRole(role: string): string {
+function formatRole(role: SelectionSlotRole): string {
   return role
     .split("-")
     .map((word) => `${word.charAt(0).toUpperCase()}${word.slice(1)}`)
@@ -232,13 +244,20 @@ function escapeHtml(value: string): string {
   );
 }
 
-function safeHref(value: string): string {
+function safeHref(value: string): string | null {
   try {
     const url = new URL(value);
     return url.protocol === "https:" || url.protocol === "http:"
       ? escapeHtml(value)
-      : "#";
+      : null;
   } catch {
-    return "#";
+    return null;
   }
+}
+
+function formatLink(title: string, url: string): string {
+  const href = safeHref(url);
+  return href === null
+    ? `<span class="link-unavailable">${escapeHtml(title)} (link unavailable)</span>`
+    : `<a href="${href}" target="_blank" rel="noopener noreferrer">${escapeHtml(title)}</a>`;
 }

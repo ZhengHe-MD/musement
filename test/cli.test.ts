@@ -88,7 +88,10 @@ describe("Musement CLI", () => {
     expect(html).toContain('href="https://example.com/one"');
     expect(html).toContain("Personally Interesting");
     expect(html).toContain("No candidate met the quality floor.");
+    expect(html).toContain("Personally Interesting — Unavailable</h2>");
     expect(html).toContain("&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;");
+    expect(html).toContain("Unsafe alternative (link unavailable)");
+    expect(html).not.toContain("javascript:");
     expect(html).not.toContain("<script>");
   });
 
@@ -159,7 +162,18 @@ class FixtureEditor implements EditionEditor {
               fullLengthMinutes: 12,
               provenance: ["https://example.com/original"],
             },
-            alternativeMaterials: [],
+            alternativeMaterials: [
+              {
+                id: "unsafe-alternative",
+                fingerprint: "unsafe-alternative".padEnd(64, "0"),
+                title: "Unsafe alternative",
+                author: "Unknown",
+                source: "Untrusted",
+                format: "article",
+                url: "javascript:alert('x')",
+                provenance: ["Untrusted fixture"],
+              },
+            ],
           },
         },
         {

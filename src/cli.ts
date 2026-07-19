@@ -118,19 +118,17 @@ export async function runCli(
       );
     });
 
-  program
-    .command("today")
-    .description("View today's canonical Daily Edition, generating it if absent")
-    .addOption(new Option("--json", "print stable machine-readable JSON").conflicts("html"))
-    .addOption(new Option("--html", "print a standalone human-readable HTML document").conflicts("json"))
-    .action(todayAction);
+  addEditionOutputOptions(
+    program
+      .command("today")
+      .description("View today's canonical Daily Edition, generating it if absent"),
+  ).action(todayAction);
 
-  program
-    .command("generate")
-    .description("Generate today's Daily Edition if absent")
-    .addOption(new Option("--json", "print stable machine-readable JSON").conflicts("html"))
-    .addOption(new Option("--html", "print a standalone human-readable HTML document").conflicts("json"))
-    .action(todayAction);
+  addEditionOutputOptions(
+    program
+      .command("generate")
+      .description("Generate today's Daily Edition if absent"),
+  ).action(todayAction);
 
   program
     .command("attempts")
@@ -407,6 +405,21 @@ export function formatDailyEdition(edition: DailyEdition): string {
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
+}
+
+function addEditionOutputOptions(command: Command): Command {
+  return command
+    .addOption(
+      new Option("--json", "print stable machine-readable JSON").conflicts(
+        "html",
+      ),
+    )
+    .addOption(
+      new Option(
+        "--html",
+        "print a standalone human-readable HTML document",
+      ).conflicts("json"),
+    );
 }
 
 function currentLocalDate(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone): string {
