@@ -85,6 +85,15 @@ export interface ProviderTrace {
   model: string;
   promptVersion: string;
   schemaVersion: string;
+  tokenUsage?: GenerationTokenUsage;
+}
+
+export interface GenerationTokenUsage {
+  totalTokens: number;
+  inputTokens: number;
+  cachedInputTokens: number;
+  outputTokens: number;
+  reasoningOutputTokens: number;
 }
 
 export interface SelectionTrace {

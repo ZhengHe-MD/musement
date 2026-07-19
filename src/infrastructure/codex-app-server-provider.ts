@@ -7,6 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 
+import type { GenerationTokenUsage } from "../domain/contracts.js";
+
 type JsonObject = Record<string, unknown>;
 
 export interface StructuredCompletionRequest {
@@ -21,6 +23,7 @@ export interface StructuredCompletion<T> {
   trace: {
     provider: string;
     model: string;
+    tokenUsage?: GenerationTokenUsage;
   };
 }
 
@@ -222,6 +225,9 @@ export class CodexAppServerProvider implements StructuredProvider {
       trace: {
         provider: started.modelProvider,
         model: started.model,
+        ...(connection.tokenUsage === null
+          ? {}
+          : { tokenUsage: connection.tokenUsage }),
       },
     };
   }
@@ -287,6 +293,7 @@ class JsonLineConnection {
   #exited = false;
   finalAgentMessage: string | null = null;
   forbiddenToolUse: string | null = null;
+  tokenUsage: GenerationTokenUsage | null = null;
 
   constructor(process: ChildProcessWithoutNullStreams) {
     this.#process = process;
@@ -390,6 +397,15 @@ class JsonLineConnection {
       this.#turnResolve = null;
       this.#turnReject = null;
     }
+
+    if (message.method === "thread/tokenUsage/updated") {
+      const tokenUsage = parseTokenUsage(
+        asObject(asObject(params?.tokenUsage)?.last),
+      );
+      if (tokenUsage !== null) {
+        this.tokenUsage = tokenUsage;
+      }
+    }
   }
 
   #fail(error: Error): void {
@@ -406,6 +422,38 @@ class JsonLineConnection {
 function asObject(value: unknown): JsonObject | null {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as JsonObject)
+    : null;
+}
+
+function parseTokenUsage(
+  value: JsonObject | null,
+): GenerationTokenUsage | null {
+  if (value === null) return null;
+  const totalTokens = tokenCount(value.totalTokens);
+  const inputTokens = tokenCount(value.inputTokens);
+  const cachedInputTokens = tokenCount(value.cachedInputTokens);
+  const outputTokens = tokenCount(value.outputTokens);
+  const reasoningOutputTokens = tokenCount(value.reasoningOutputTokens);
+  return totalTokens === null ||
+      inputTokens === null ||
+      cachedInputTokens === null ||
+      outputTokens === null ||
+      reasoningOutputTokens === null
+    ? null
+    : {
+      totalTokens,
+      inputTokens,
+      cachedInputTokens,
+      outputTokens,
+      reasoningOutputTokens,
+    };
+}
+
+function tokenCount(value: unknown): number | null {
+  return typeof value === "number" &&
+      Number.isSafeInteger(value) &&
+      value >= 0
+    ? value
     : null;
 }
 

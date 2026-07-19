@@ -88,9 +88,85 @@ describe("AI-assisted editorial selection", () => {
       ]),
     );
     expect(provider.lastRequest?.prompt).not.toContain("Too short.");
+    expect(draft.trace.provider.tokenUsage).toEqual({
+      totalTokens: 321,
+      inputTokens: 200,
+      cachedInputTokens: 50,
+      outputTokens: 121,
+      reasoningOutputTokens: 80,
+    });
     expect(findKeywordPaths(provider.lastRequest?.outputSchema, "oneOf")).toEqual(
       [],
     );
+  });
+
+  it("totals token usage across bounded broadening selections", async () => {
+    const initialMaterials = [
+      material("material-important", "Consequential policy change"),
+      material("material-interesting", "A new view of animal cognition"),
+    ];
+    const broadenedMaterial = material(
+      "material-wildcard",
+      "How ancient pigments were manufactured",
+    );
+    const firstResponse = {
+      slots: [
+        selection("important", "policy-change", "public-policy", "material-important"),
+        selection("personally-interesting", "animal-cognition", "cognitive-science", "material-interesting"),
+        { role: "wildcard", status: "unavailable", reason: "No qualified surprise yet." },
+      ],
+      candidate_assessments: [
+        assessment("policy-change", "public-policy", ["material-important"]),
+        assessment("animal-cognition", "cognitive-science", ["material-interesting"]),
+      ],
+      shortlists: [
+        { role: "important", discovery_keys: ["policy-change"] },
+        { role: "personally-interesting", discovery_keys: ["animal-cognition"] },
+        { role: "wildcard", discovery_keys: [] },
+      ],
+      decisions: ["Needed a stronger wildcard."],
+    };
+    const secondResponse = {
+      slots: [
+        selection("important", "policy-change", "public-policy", "material-important"),
+        selection("personally-interesting", "animal-cognition", "cognitive-science", "material-interesting"),
+        selection("wildcard", "ancient-pigments", "material-culture", "material-wildcard"),
+      ],
+      candidate_assessments: [
+        assessment("policy-change", "public-policy", ["material-important"]),
+        assessment("animal-cognition", "cognitive-science", ["material-interesting"]),
+        assessment("ancient-pigments", "material-culture", ["material-wildcard"]),
+      ],
+      shortlists: [
+        { role: "important", discovery_keys: ["policy-change"] },
+        { role: "personally-interesting", discovery_keys: ["animal-cognition"] },
+        { role: "wildcard", discovery_keys: ["ancient-pigments"] },
+      ],
+      decisions: ["Selected a qualified wildcard after broadening."],
+    };
+    const editor = new AiEditionEditor({
+      configuration,
+      collector: {
+        collect: async () => initialMaterials,
+        broaden: async () => [broadenedMaterial],
+      },
+      provider: new SequenceStructuredProvider([firstResponse, secondResponse]),
+    });
+
+    const draft = await editor.generate({
+      localDate: "2026-07-18",
+      excludedDiscoveryIds: [],
+      priorExposures: [],
+      feedbackEvidence: [],
+    });
+
+    expect(draft.trace.provider.tokenUsage).toEqual({
+      totalTokens: 642,
+      inputTokens: 400,
+      cachedInputTokens: 100,
+      outputTokens: 242,
+      reasoningOutputTokens: 160,
+    });
   });
 });
 
@@ -122,7 +198,42 @@ class FixtureStructuredProvider {
     this.lastRequest = request;
     return {
       value: this.response as T,
-      trace: { provider: "fixture", model: "fixture-model" },
+      trace: {
+        provider: "fixture",
+        model: "fixture-model",
+        tokenUsage: {
+          totalTokens: 321,
+          inputTokens: 200,
+          cachedInputTokens: 50,
+          outputTokens: 121,
+          reasoningOutputTokens: 80,
+        },
+      },
+    };
+  }
+}
+
+class SequenceStructuredProvider {
+  #index = 0;
+
+  constructor(private readonly responses: unknown[]) {}
+
+  async completeStructured<T>(): Promise<StructuredCompletion<T>> {
+    const response = this.responses[this.#index];
+    this.#index += 1;
+    return {
+      value: response as T,
+      trace: {
+        provider: "fixture",
+        model: "fixture-model",
+        tokenUsage: {
+          totalTokens: 321,
+          inputTokens: 200,
+          cachedInputTokens: 50,
+          outputTokens: 121,
+          reasoningOutputTokens: 80,
+        },
+      },
     };
   }
 }

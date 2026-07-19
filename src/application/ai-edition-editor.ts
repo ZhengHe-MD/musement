@@ -10,6 +10,7 @@ import {
   type CollectedMaterial,
   type DailyEditionDraft,
   type EditionEditor,
+  type GenerationTokenUsage,
   type GenerateEditionRequest,
   type SelectionSlot,
   selectionSlotRoles,
@@ -94,6 +95,8 @@ export class AiEditionEditor implements EditionEditor {
   }
 
   async generate(request: GenerateEditionRequest): Promise<DailyEditionDraft> {
+    const tokenUsages: GenerationTokenUsage[] = [];
+    let completedSelections = 0;
     let collected = await this.#collector.collect(this.#configuration.sources);
     const priorFingerprints = new Set(
       request.priorExposures.flatMap((item) => item.materialFingerprints),
@@ -111,6 +114,10 @@ export class AiEditionEditor implements EditionEditor {
         effort: "high",
       };
       const completion = await this.#provider.completeStructured<unknown>(completionRequest);
+      completedSelections += 1;
+      if (completion.trace.tokenUsage !== undefined) {
+        tokenUsages.push(completion.trace.tokenUsage);
+      }
       const response = editorialResponseSchema.parse(completion.value);
       validateEditorialResponse(response, eligibleMaterials);
       return { completion, response };
@@ -172,10 +179,35 @@ export class AiEditionEditor implements EditionEditor {
           model: completion.trace.model,
           promptVersion: "daily-edition-v1",
           schemaVersion: "1",
+          ...(tokenUsages.length === completedSelections
+            ? { tokenUsage: sumTokenUsage(tokenUsages) }
+            : {}),
         },
       },
     };
   }
+}
+
+function sumTokenUsage(
+  usages: readonly GenerationTokenUsage[],
+): GenerationTokenUsage {
+  return usages.reduce<GenerationTokenUsage>(
+    (total, usage) => ({
+      totalTokens: total.totalTokens + usage.totalTokens,
+      inputTokens: total.inputTokens + usage.inputTokens,
+      cachedInputTokens: total.cachedInputTokens + usage.cachedInputTokens,
+      outputTokens: total.outputTokens + usage.outputTokens,
+      reasoningOutputTokens:
+        total.reasoningOutputTokens + usage.reasoningOutputTokens,
+    }),
+    {
+      totalTokens: 0,
+      inputTokens: 0,
+      cachedInputTokens: 0,
+      outputTokens: 0,
+      reasoningOutputTokens: 0,
+    },
+  );
 }
 
 interface EligibilityAssessment {

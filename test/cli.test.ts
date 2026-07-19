@@ -96,6 +96,11 @@ describe("Musement CLI", () => {
     expect(html).toContain('<span lang="zh-Hans">入选</span>');
     expect(html).toContain("1 candidate");
     expect(html).toContain("Raw trace");
+    expect(html).toContain("Vendor");
+    expect(html).toContain("Fixture");
+    expect(html).toContain("321 total tokens");
+    expect(html).toContain("200 input");
+    expect(html).toContain("121 output");
     expect(html).toContain("Candidate provenance");
     expect(html).toContain("https://example.com/provenance");
     expect(html).toContain("pre { max-height: none; overflow: visible; }");
@@ -295,6 +300,13 @@ class FixtureEditor implements EditionEditor {
           model: "fixture-v1",
           promptVersion: "fixture-v1",
           schemaVersion: "1",
+          tokenUsage: {
+            totalTokens: 321,
+            inputTokens: 200,
+            cachedInputTokens: 50,
+            outputTokens: 121,
+            reasoningOutputTokens: 80,
+          },
         },
       },
     };

@@ -40,7 +40,7 @@ The Selection Trace records candidate identities, evidence, structured assessmen
 
 ## AI capability boundary
 
-Pipeline stages use one shared AI capability boundary rather than calling a provider directly. Clustering, summarization, assessment, and selection may each choose task-specific model settings, while the Selection Trace records the provider, model, prompt version, and output-schema version used.
+Pipeline stages use one shared AI capability boundary rather than calling a provider directly. Clustering, summarization, assessment, and selection may each choose task-specific model settings, while the Selection Trace records the provider, model, prompt version, output-schema version, and provider-reported generation token usage when available.
 
 The MVP implements one provider end to end. Supporting several providers or local models is deferred, but provider-specific authentication and request details do not leak into the selection domain.
 

@@ -2,7 +2,7 @@
 
 ## Capability boundary
 
-Musement's selection pipeline depends on AI capabilities rather than provider APIs, SDKs, credentials, or billing models. A provider adapter supplies structured clustering, summarization, assessment, and selection operations and reports the provider, model, prompt, and output-schema versions used.
+Musement's selection pipeline depends on AI capabilities rather than provider APIs, SDKs, credentials, or billing models. A provider adapter supplies structured clustering, summarization, assessment, and selection operations and reports the provider, model, prompt, and output-schema versions used, together with generation token usage when the provider exposes it.
 
 The MVP implements one adapter: Codex app server with ChatGPT-managed OAuth. Codex owns browser or device-code login, credential storage, refresh, logout, entitlement checks, and rate-limit reporting.
 

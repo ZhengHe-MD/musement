@@ -48,6 +48,13 @@ describe("Codex app-server provider", () => {
     expect(result.trace).toEqual({
       provider: "openai",
       model: "fixture-model",
+      tokenUsage: {
+        totalTokens: 321,
+        inputTokens: 200,
+        cachedInputTokens: 50,
+        outputTokens: 121,
+        reasoningOutputTokens: 80,
+      },
     });
   });
 

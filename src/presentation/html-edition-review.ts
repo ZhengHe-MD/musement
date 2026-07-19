@@ -1,6 +1,8 @@
 import type {
   DailyEdition,
   FilledSelectionSlot,
+  GenerationTokenUsage,
+  ProviderTrace,
   SelectionSlotRole,
   SelectionTrace,
   UnavailableSelectionSlot,
@@ -163,7 +165,9 @@ export function formatEditionReviewAsHtml(edition: DailyEdition): string {
     .raw-record { overflow: clip; }
     .raw-record summary { padding: var(--space-3) var(--space-4); color: var(--accent-deep); }
     pre { max-height: 38rem; margin: 0; padding: var(--space-4); overflow: auto; border-top: 1px solid var(--divider); background: var(--surface-raised); font-size: .72rem; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
-    footer { display: flex; justify-content: space-between; gap: var(--space-4); margin-top: var(--space-8); padding-top: var(--space-4); border-top: 1px solid var(--divider); color: var(--muted); font-size: .72rem; }
+    footer { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-3) var(--space-6); margin-top: var(--space-8); padding-top: var(--space-4); border-top: 1px solid var(--divider); color: var(--muted); font-size: .72rem; }
+    .footer-meta { text-align: right; overflow-wrap: anywhere; }
+    .footer-note { grid-column: 1 / -1; padding-top: var(--space-2); border-top: 1px solid var(--divider); }
     .role-important { --role-accent: var(--accent); --role-deep: var(--accent-deep); --role-tint: var(--accent-soft); }
     .role-personally-interesting { --role-accent: var(--sage); --role-deep: var(--sage-deep); --role-tint: var(--sage-soft); }
     .role-wildcard { --role-accent: var(--wildcard); --role-deep: var(--muted); --role-tint: var(--neutral-soft); }
@@ -177,7 +181,9 @@ export function formatEditionReviewAsHtml(edition: DailyEdition): string {
       .shortlists, .role-grid, .identifiers { grid-template-columns: 1fr; }
       .record > summary { align-items: flex-start; }
       .record-summary-meta .tag { display: none; }
-      footer { flex-direction: column; }
+      footer { grid-template-columns: 1fr; }
+      .footer-meta { text-align: left; }
+      .footer-note { grid-column: auto; }
     }
     @media (prefers-color-scheme: dark) {
       :root {
@@ -242,10 +248,7 @@ ${slots}
     ${formatWhySection(trace)}
     ${formatTraceSection(trace, selectedRolesByDiscoveryKey(edition))}
     ${formatRawTrace(trace)}
-    <footer>
-      <span>${i18n("One edition, no backlog.", "一份精选，绝无积压。")}</span>
-      <span>${i18n("This trace records inspectable evidence and decisions, not hidden model chain-of-thought.", "此记录留存可查阅的证据与决策，而非隐藏的模型思维链。")}</span>
-    </footer>
+    ${formatFooter(trace.provider)}
   </main>
 </body>
 </html>
@@ -529,6 +532,41 @@ function formatProvider(trace: SelectionTrace): string {
     ["Schema", "结构", trace.provider.schemaVersion],
   ] as const;
   return `<div class="provider mono">${items.map(([english, chinese, value]) => `<span><span>${i18n(english, chinese)} </span><strong>${escapeHtml(value)}</strong></span>`).join("")}</div>`;
+}
+
+function formatFooter(provider: ProviderTrace): string {
+  const vendor = formatVendorName(provider.name);
+  const tokenUsage = provider.tokenUsage === undefined
+    ? i18n("Token usage not recorded", "未记录令牌用量")
+    : formatTokenUsage(provider.tokenUsage);
+  return `<footer>
+      <span>${i18n("One edition, no backlog.", "一份精选，绝无积压。")}</span>
+      <span class="footer-meta mono">${i18n("Vendor", "供应商")} <strong>${escapeHtml(vendor)}</strong> · ${i18n("Model", "模型")} <strong>${escapeHtml(provider.model)}</strong> · ${tokenUsage}</span>
+      <span class="footer-note">${i18n("This trace records inspectable evidence and decisions, not hidden model chain-of-thought.", "此记录留存可查阅的证据与决策，而非隐藏的模型思维链。")}</span>
+    </footer>`;
+}
+
+function formatTokenUsage(usage: GenerationTokenUsage): string {
+  const total = formatCount(usage.totalTokens);
+  const input = formatCount(usage.inputTokens);
+  const cached = formatCount(usage.cachedInputTokens);
+  const output = formatCount(usage.outputTokens);
+  const reasoning = formatCount(usage.reasoningOutputTokens);
+  return [
+    i18n(`${total} total tokens`, `${total} 令牌总计`),
+    i18n(`${input} input`, `${input} 输入`),
+    i18n(`${cached} cached input`, `${cached} 缓存输入`),
+    i18n(`${output} output`, `${output} 输出`),
+    i18n(`${reasoning} reasoning output`, `${reasoning} 推理输出`),
+  ].join(" · ");
+}
+
+function formatVendorName(value: string): string {
+  return value.toLowerCase() === "openai" ? "OpenAI" : formatLabel(value);
+}
+
+function formatCount(value: number): string {
+  return new Intl.NumberFormat("en-US").format(value);
 }
 
 function formatIdentifiers(

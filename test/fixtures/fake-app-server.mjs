@@ -98,6 +98,30 @@ input.on("line", (line) => {
       },
     });
     send({
+      method: "thread/tokenUsage/updated",
+      params: {
+        threadId,
+        turnId: "fixture-turn",
+        tokenUsage: {
+          total: {
+            totalTokens: 321,
+            inputTokens: 200,
+            cachedInputTokens: 50,
+            outputTokens: 121,
+            reasoningOutputTokens: 80,
+          },
+          last: {
+            totalTokens: 321,
+            inputTokens: 200,
+            cachedInputTokens: 50,
+            outputTokens: 121,
+            reasoningOutputTokens: 80,
+          },
+          modelContextWindow: 200000,
+        },
+      },
+    });
+    send({
       method: "turn/completed",
       params: { turn: { id: "fixture-turn", status: "completed", error: null } },
     });

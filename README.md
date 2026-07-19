@@ -48,6 +48,8 @@ node dist/cli.js outbox --after 0
 
 `today --html` and `generate --html` write a unified Edition Review to stdout: the three encounters first, followed by assembly decisions and the progressively disclosed Selection Trace. The standalone document is responsive, printable, supports English and Chinese interface labels, and contains no scripts or external assets. Collected text is escaped before rendering. `--html` and `--json` are mutually exclusive.
 
+The footer identifies the editorial vendor and model and reports total, input, cached-input, output, and reasoning-output tokens when the provider supplied usage metadata. Editions frozen before token tracking was added remain unchanged and show that token usage was not recorded.
+
 `trace DATE --html` writes the same unified Edition Review for an existing historical edition. Plain `trace DATE` continues to emit Selection Trace JSON.
 
 Topic-level `not-useful` feedback creates a pending Soft Suppression proposal. Review and resolve proposals explicitly:
