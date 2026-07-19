@@ -6,3 +6,8 @@ coverage/
 *.sqlite-shm
 *.sqlite-wal
 .musement/
+musement.yaml
+daily-edition.html
+edition-review.html
+historical-edition-review.html
+selection-trace.html
