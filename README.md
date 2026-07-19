@@ -34,8 +34,8 @@ npm run provider:smoke
 
 ```sh
 node dist/cli.js today
-node dist/cli.js today --html > daily-edition.html
-open daily-edition.html # macOS
+node dist/cli.js today --html > edition-review.html
+open edition-review.html # macOS
 node dist/cli.js trace 2026-07-18
 node dist/cli.js trace 2026-07-18 --html > historical-edition-review.html
 open historical-edition-review.html # macOS

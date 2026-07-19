@@ -92,8 +92,13 @@ describe("Musement CLI", () => {
     expect(html).toContain("Why this edition");
     expect(html).toContain("为何是这一份");
     expect(html).toContain("Selected one inspectable candidate.");
+    expect(html).toContain('<span lang="en">Selected</span>');
+    expect(html).toContain('<span lang="zh-Hans">入选</span>');
     expect(html).toContain("1 candidate");
     expect(html).toContain("Raw trace");
+    expect(html).toContain("Candidate provenance");
+    expect(html).toContain("https://example.com/provenance");
+    expect(html).toContain("pre { max-height: none; overflow: visible; }");
     expect(html).toContain('href="https://example.com/one"');
     expect(html).toContain("Personally Interesting");
     expect(html).toContain("No candidate met the quality floor.");
@@ -256,6 +261,7 @@ class FixtureEditor implements EditionEditor {
             title: 'Candidate <script>alert("x")</script>',
             url: "https://example.com/one",
             source: { id: "fixture", name: "Fixture Source" },
+            provenance: ["https://example.com/provenance"],
             eligible: true,
             ruleOutcomes: ["eligible:coded-quality-floor"],
           },

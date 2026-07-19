@@ -212,6 +212,7 @@ export function formatEditionReviewAsHtml(edition: DailyEdition): string {
       .masthead, .encounter, .metric, .provider, .shortlist, .record { box-shadow: none; }
       .encounter, .record, .shortlist { break-inside: avoid; }
       .section { padding-top: 2rem; }
+      pre { max-height: none; overflow: visible; }
       a { color: inherit; }
     }
   </style>
@@ -239,7 +240,7 @@ export function formatEditionReviewAsHtml(edition: DailyEdition): string {
 ${slots}
     </section>
     ${formatWhySection(trace)}
-    ${formatTraceSection(trace)}
+    ${formatTraceSection(trace, selectedRolesByDiscoveryKey(edition))}
     ${formatRawTrace(trace)}
     <footer>
       <span>${i18n("One edition, no backlog.", "一份精选，绝无积压。")}</span>
@@ -352,13 +353,16 @@ function formatWhySection(trace: SelectionTrace): string {
     </section>`;
 }
 
-function formatTraceSection(trace: SelectionTrace): string {
+function formatTraceSection(
+  trace: SelectionTrace,
+  selectedRoles: ReadonlyMap<string, SelectionSlotRole>,
+): string {
   return `<section id="inspect" class="section" aria-labelledby="inspect-heading">
       ${sectionHeading("03", "inspect-heading", "Inspect the selection process", "查阅甄选过程")}
       <h4 class="subheading">${i18n("Shortlists", "入围名单")}</h4>
       ${formatShortlists(trace.shortlists ?? [])}
       <h4 class="subheading">${i18n("Editorial assessments", "编辑评估")}</h4>
-      ${formatAssessments(trace.assessments ?? [])}
+      ${formatAssessments(trace.assessments ?? [], selectedRoles)}
       <h4 class="subheading">${i18n("Candidate materials", "候选材料")}</h4>
       ${formatCandidates(trace.candidates)}
     </section>`;
@@ -382,14 +386,21 @@ function formatShortlists(shortlists: unknown[]): string {
   }).join("")}</div>`;
 }
 
-function formatAssessments(assessments: unknown[]): string {
+function formatAssessments(
+  assessments: unknown[],
+  selectedRoles: ReadonlyMap<string, SelectionSlotRole>,
+): string {
   if (assessments.length === 0) {
     return `<div class="shortlist muted">${i18n("No editorial assessments were recorded.", "未记录编辑评估。")}</div>`;
   }
-  return `<div class="records">${assessments.map(formatAssessment).join("")}</div>`;
+  return `<div class="records">${assessments.map((assessment, index) => formatAssessment(assessment, index, selectedRoles)).join("")}</div>`;
 }
 
-function formatAssessment(value: unknown, index: number): string {
+function formatAssessment(
+  value: unknown,
+  index: number,
+  selectedRoles: ReadonlyMap<string, SelectionSlotRole>,
+): string {
   const record = asRecord(value);
   if (record === null) {
     return formatUnknownRecord(`${i18n("Assessment", "评估")} ${index + 1}`, value);
@@ -401,11 +412,17 @@ function formatAssessment(value: unknown, index: number): string {
   const evidence = stringValue(record.evidence_status);
   const uncertainty = stringValue(record.uncertainty);
   const roles = Array.isArray(record.role_assessments) ? record.role_assessments : [];
-  const winning = roles.some((item) => asRecord(item)?.eligible === true);
+  const eligibleForAnyRole = roles.some((item) => asRecord(item)?.eligible === true);
+  const selectedRole = discoveryKey === undefined
+    ? undefined
+    : selectedRoles.get(discoveryKey);
+  const assessmentStatus = selectedRole === undefined
+    ? i18n(eligibleForAnyRole ? "Eligible" : "Not eligible", eligibleForAnyRole ? "合格" : "不合格")
+    : `${i18n("Selected", "入选")} · ${formatRole(selectedRole)}`;
   return `<details class="record" id="${domId("assessment", discoveryKey ?? String(index + 1))}">
         <summary>
           <span class="record-title">${escapeHtml(title)}</span>
-          <span class="record-summary-meta"><span class="tag ${winning ? "tag-sage" : "tag-neutral"}">${i18n(winning ? "Eligible" : "Not eligible", winning ? "合格" : "不合格")}</span></span>
+          <span class="record-summary-meta"><span class="tag ${selectedRole !== undefined || eligibleForAnyRole ? "tag-sage" : "tag-neutral"}">${assessmentStatus}</span></span>
         </summary>
         <div class="record-body">
           ${formatIdentifiers([["Discovery key", "发现键", discoveryKey], ["Topic key", "主题键", topicKey]])}
@@ -454,6 +471,7 @@ function formatCandidate(value: unknown, index: number): string {
   const sourceName = stringValue(source?.name);
   const eligible = typeof record.eligible === "boolean" ? record.eligible : null;
   const outcomes = stringArray(record.ruleOutcomes);
+  const provenance = stringArray(record.provenance);
   const summary = stringValue(record.derivedSummary);
   return `<details class="record">
         <summary>
@@ -464,6 +482,7 @@ function formatCandidate(value: unknown, index: number): string {
           ${sourceName === undefined ? "" : `<p class="muted mono">${escapeHtml(sourceName)}</p>`}
           ${url === undefined ? "" : `<span class="candidate-link">${formatExternalLink(url, url)}</span>`}
           ${formatIdentifiers([["Material ID", "材料 ID", materialId], ["Fingerprint", "指纹", fingerprint]])}
+          ${provenance.length === 0 ? "" : `<span class="micro-label">${i18n("Candidate provenance", "候选材料来源")}</span><ul class="outcome-list">${provenance.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`}
           ${summary === undefined ? "" : `<p>${escapeHtml(summary)}</p>`}
           ${outcomes.length === 0 ? "" : `<ul class="outcome-list">${outcomes.map((outcome) => `<li>${escapeHtml(outcome)}</li>`).join("")}</ul>`}
         </div>
@@ -478,6 +497,18 @@ function formatRawTrace(trace: SelectionTrace): string {
         <pre>${escapeHtml(JSON.stringify(trace, null, 2))}</pre>
       </details>
     </section>`;
+}
+
+function selectedRolesByDiscoveryKey(
+  edition: DailyEdition,
+): ReadonlyMap<string, SelectionSlotRole> {
+  return new Map(
+    edition.slots.flatMap((slot) =>
+      slot.status === "filled"
+        ? [[slot.discovery.subjectKey, slot.role] as const]
+        : [],
+    ),
+  );
 }
 
 function formatMetric(
