@@ -13,18 +13,21 @@ Musement is a local, single-user knowledge-exploration system. It creates one sm
 ```sh
 npm install
 npm run build
-node dist/cli.js init
+npm link
+musement init
 ```
 
-Edit `musement.yaml` before generating an edition. Replace the example source, add deliberate Enduring and Current Interest statements, and adjust the Attention Budget. Configuration remains human-readable; operational state is stored under `.musement/`.
+Edit `~/.musement/config.yaml` before generating an edition. Replace the example source, add deliberate Enduring and Current Interest statements, and adjust the Attention Budget. Operational state is user-scoped too: the SQLite database is stored at `~/.musement/musement.sqlite`, and temporary source content is stored under `~/.musement/raw-material-cache/`.
 
-Editorial generation can take several minutes because it uses high-effort reasoning. `provider_timeout_seconds` defaults to 300 and may be set between 30 and 900 seconds in `musement.yaml`; increasing it changes only how long Musement waits and does not change provider billing or authentication.
+Commands use those user-scoped paths from every working directory. Pass explicit global `--config` and `--data-dir` options only when you intentionally want an isolated installation.
+
+Editorial generation can take several minutes because it uses high-effort reasoning. `provider_timeout_seconds` defaults to 300 and may be set between 30 and 900 seconds in `~/.musement/config.yaml`; increasing it changes only how long Musement waits and does not change provider billing or authentication.
 
 Verify the subscription-backed provider separately:
 
 ```sh
 npm run build
-node dist/cli.js doctor
+musement doctor
 npm run provider:smoke
 ```
 
@@ -33,15 +36,15 @@ npm run provider:smoke
 ## Daily use
 
 ```sh
-node dist/cli.js today
-node dist/cli.js today --html > edition-review.html
+musement today
+musement today --html > edition-review.html
 open edition-review.html # macOS
-node dist/cli.js trace 2026-07-18
-node dist/cli.js trace 2026-07-18 --html > historical-edition-review.html
+musement trace 2026-07-18
+musement trace 2026-07-18 --html > historical-edition-review.html
 open historical-edition-review.html # macOS
-node dist/cli.js feedback 2026-07-18 --slot important --kind good-pick
-node dist/cli.js select 2026-07-18 --slot important
-node dist/cli.js outbox --after 0
+musement feedback 2026-07-18 --slot important --kind good-pick
+musement select 2026-07-18 --slot important
+musement outbox --after 0
 ```
 
 `today` generates on first access and returns the same frozen edition thereafter. `generate` is an equivalent explicit command suitable for `cron` or `launchd`; Musement has no built-in scheduler.
@@ -55,16 +58,16 @@ The footer identifies the editorial vendor and model and reports total, input, c
 Topic-level `not-useful` feedback creates a pending Soft Suppression proposal. Review and resolve proposals explicitly:
 
 ```sh
-node dist/cli.js proposals --status pending
-node dist/cli.js proposal-confirm PROPOSAL_ID
-node dist/cli.js proposal-reject PROPOSAL_ID
+musement proposals --status pending
+musement proposal-confirm PROPOSAL_ID
+musement proposal-reject PROPOSAL_ID
 ```
 
 After one month and at least 20 editions, review and record the one-time MVP evaluation:
 
 ```sh
-node dist/cli.js evaluation
-node dist/cli.js evaluation-record \
+musement evaluation
+musement evaluation-record \
   --worthwhile DISCOVERY_ID_1 DISCOVERY_ID_2 DISCOVERY_ID_3 DISCOVERY_ID_4 DISCOVERY_ID_5 \
   --continue yes
 ```

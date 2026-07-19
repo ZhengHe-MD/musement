@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
 import { chmod, mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { Command, Option } from "commander";
@@ -55,6 +56,7 @@ export async function runCli(
   argv: string[],
   dependencies: CliDependencies = defaultDependencies,
 ): Promise<void> {
+  const defaultDataDirectory = join(homedir(), ".musement");
   const program = new Command();
   const runtimeHolder: { current: Runtime | null } = { current: null };
   const runtimeForCommand = async (): Promise<Runtime> => {
@@ -65,8 +67,16 @@ export async function runCli(
     .name("musement")
     .description("A deliberately small daily encounter with the wider world.")
     .version("0.1.0")
-    .option("--config <path>", "human-owned YAML configuration", "musement.yaml")
-    .option("--data-dir <path>", "local operational state", ".musement");
+    .option(
+      "--config <path>",
+      "human-owned YAML configuration",
+      join(defaultDataDirectory, "config.yaml"),
+    )
+    .option(
+      "--data-dir <path>",
+      "local operational state",
+      defaultDataDirectory,
+    );
 
   program
     .command("init")
@@ -331,6 +341,14 @@ export async function runCli(
   }
 }
 
+export function runCliAsProcess(argv: string[] = process.argv): void {
+  runCli(argv).catch((error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`musement: ${message}\n`);
+    process.exitCode = 1;
+  });
+}
+
 async function runtimeFromProgram(
   program: Command,
   dependencies: CliDependencies,
@@ -484,9 +502,5 @@ if (
   process.argv[1] !== undefined &&
   import.meta.url === pathToFileURL(resolve(process.argv[1])).href
 ) {
-  runCli(process.argv).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`musement: ${message}\n`);
-    process.exitCode = 1;
-  });
+  runCliAsProcess();
 }
