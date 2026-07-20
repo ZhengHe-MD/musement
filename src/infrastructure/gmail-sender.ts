@@ -4,6 +4,7 @@ import { promisify } from "node:util";
 import { z } from "zod";
 
 import type { DailyEditionEmailSender } from "../application/daily-email-delivery.js";
+import { hasErrorCode } from "../node-error.js";
 import { assertGrantedGmailSendScope } from "./gmail-oauth.js";
 
 const execFileAsync = promisify(execFile);
@@ -103,7 +104,7 @@ export async function readGmailAuthorizationFromKeychain(): Promise<StoredGmailA
     ]);
     return authorizationSchema.parse(JSON.parse(stdout));
   } catch (error) {
-    if (isErrorCode(error, 44)) {
+    if (hasErrorCode(error, 44)) {
       throw new Error(
         "Gmail is not authorized; run musement gmail-auth --credentials PATH first.",
       );
@@ -132,13 +133,4 @@ function formatHtmlMessage(options: {
     "Content-Transfer-Encoding: 8bit",
   ];
   return `${headers.join("\r\n")}\r\n\r\n${options.html}`;
-}
-
-function isErrorCode(error: unknown, code: number): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === code
-  );
 }

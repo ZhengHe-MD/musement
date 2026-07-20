@@ -9,7 +9,7 @@ The one canonical, immutable set of selections for a user's local calendar day. 
 _Avoid_: Daily feed, daily queue, refresh
 
 **Daily Edition Delivery**:
-The optional presentation of one canonical Daily Edition through a user-chosen surface such as self-addressed email. Delivery creates no unread queue, reminder pressure, or missed-day debt, and a failed delivery does not change or replace the edition.
+The optional presentation of one canonical Daily Edition through a user-chosen surface such as self-addressed email or a private current-edition web page. Delivery creates no unread queue, reminder pressure, archive, or missed-day debt, and a failed delivery does not change or replace the edition.
 _Avoid_: Newsletter subscription, inbox task, reading reminder
 
 **Generation Attempt**:

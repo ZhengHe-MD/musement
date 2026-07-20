@@ -7,6 +7,7 @@ Musement is a local, single-user knowledge-exploration system. It creates one sm
 - Node.js 24 or newer
 - Codex CLI with ChatGPT sign-in (`codex login status`)
 - Network access to the public sources you configure and to the Codex provider
+- Optional: Tailscale for private browser access to the full HTML edition
 
 ## Install and configure
 
@@ -70,6 +71,28 @@ musement schedule status
 The schedule uses the Mac's timezone and requires it to match `timezone` in `~/.musement/config.yaml`. Logs are written to `~/.musement/logs/`. A successful date is recorded in `~/.musement/email-deliveries.json`, so ordinary reruns report that it was already delivered. Generation, provider, and Gmail failures remain retryable and send no failure email. Remove the job with `musement schedule remove`.
 
 Google OAuth projects with an External audience in **Testing** expire non-basic refresh tokens after seven days. For durable unattended delivery, publish the personal OAuth app to **In production** and authorize again; an unverified personal app may show Google's warning during that one-time authorization.
+
+## Private HTML sharing with Tailscale
+
+Musement can expose only the current Edition Review at a private tailnet URL and add that URL to later Gmail deliveries. It discovers the installing user's own Tailscale DNS name; no account, hostname, or tailnet is hard-coded.
+
+On macOS with Tailscale already connected:
+
+```sh
+musement share install
+musement share publish
+musement share status
+```
+
+`share install` creates a localhost-only web server LaunchAgent and configures only the `/musement/today` Tailscale Serve path. The first install may require enabling HTTPS Certificates in the Tailscale admin console. `share publish` writes today's already-canonical Edition Review to the stable URL; later `musement deliver` runs update the page before Gmail delivery. The site sends `no-store` headers and exposes no dated archive.
+
+The default localhost port is `43187`. Use `--port` to avoid a local conflict and `--tailscale PATH` when the Tailscale CLI is outside common installation locations. Remove only Musement's route and service with:
+
+```sh
+musement share remove
+```
+
+The site server itself is platform-neutral. Users on another operating system can run `musement share serve --port PORT` under their own service manager and point Tailscale Serve's `/musement/today` path at `http://127.0.0.1:PORT/today`; automatic lifecycle installation currently uses macOS LaunchAgents.
 
 `today --html` and `generate --html` write a unified Edition Review to stdout: the three encounters first, followed by assembly decisions and the progressively disclosed Selection Trace. The standalone document is responsive, printable, supports English and Chinese interface labels, and contains no scripts or external assets. Collected text is escaped before rendering. `--html` and `--json` are mutually exclusive.
 

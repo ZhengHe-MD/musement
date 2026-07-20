@@ -19,6 +19,7 @@ import {
   type SelectionSlotRole,
   selectionSlotRoles,
 } from "../domain/contracts.js";
+import { localDateInTimezone } from "../local-date.js";
 
 export interface MusementDependencies {
   store: EditionStore;
@@ -326,17 +327,6 @@ function oneMonthAfter(value: string): Date {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown generation failure";
-}
-
-function localDateInTimezone(date: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const values = new Map(parts.map((part) => [part.type, part.value]));
-  return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
 }
 
 function assertValidDraft(

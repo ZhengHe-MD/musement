@@ -13,6 +13,8 @@ import {
   type DailyEmailDeliveryResult,
 } from "./application/daily-email-delivery.js";
 import { Musement } from "./application/musement.js";
+import { PrivateEditionSharing } from "./application/private-edition-sharing.js";
+import { addPrivateEditionLink } from "./presentation/private-edition-email-link.js";
 import {
   loadConfiguration,
   type MusementConfiguration,
@@ -33,9 +35,21 @@ import { RawMaterialCache } from "./infrastructure/raw-material-cache.js";
 import { authorizeGmailSelfDelivery } from "./infrastructure/gmail-oauth.js";
 import { GmailApiSelfSender } from "./infrastructure/gmail-sender.js";
 import { MacOsDailyScheduler } from "./infrastructure/macos-daily-scheduler.js";
+import { MacOsPrivateSiteService } from "./infrastructure/macos-private-site-service.js";
 import { SqliteMusementStore } from "./infrastructure/sqlite-musement-store.js";
+import {
+  type PrivateSharingManager,
+  TailscalePrivateSharing,
+} from "./infrastructure/tailscale-private-sharing.js";
+import {
+  findTailscaleExecutable,
+  TailscaleServe,
+} from "./infrastructure/tailscale-serve.js";
+import { localDateInTimezone } from "./local-date.js";
+import { hasErrorCode } from "./node-error.js";
 import { YamlInterestProfileUpdater } from "./infrastructure/yaml-interest-profile.js";
 import { formatEditionReviewAsHtml } from "./presentation/html-edition-review.js";
+import { addPrivateSharingCommands } from "./presentation/private-sharing-commands.js";
 
 export interface Runtime {
   musement: Musement;
@@ -60,6 +74,10 @@ export interface CliDependencies {
     dataDirectory: string;
   }) => Promise<DailyEmailDeliveryResult>;
   createScheduler?: () => DailyScheduler;
+  createPrivateSharingManager?: (options: {
+    dataDirectory: string;
+    tailscalePath?: string;
+  }) => Promise<PrivateSharingManager>;
 }
 
 export interface DailyScheduler {
@@ -80,6 +98,7 @@ const defaultDependencies: CliDependencies = {
   authorizeGmail: authorizeGmailSelfDelivery,
   deliverEdition: deliverEditionByEmail,
   createScheduler: createProductionScheduler,
+  createPrivateSharingManager: createProductionPrivateSharingManager,
 };
 
 export async function runCli(
@@ -133,10 +152,24 @@ export async function runCli(
       const runtime = await runtimeForCommand();
       const edition = await runtime.musement.viewToday();
       const globalOptions = program.opts<{ dataDir: string }>();
+      const sharing = new PrivateEditionSharing({
+        dataDirectory: resolve(globalOptions.dataDir),
+      });
+      const editionHtml = formatEditionReviewAsHtml(edition);
+      const privateUrl = await sharing.publishIfConfigured({
+        localDate: edition.localDate,
+        timeZone:
+          runtime.configuration?.timezone ??
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        html: editionHtml,
+      });
       const deliver = dependencies.deliverEdition ?? deliverEditionByEmail;
       const result = await deliver({
         localDate: edition.localDate,
-        html: formatEditionReviewAsHtml(edition),
+        html:
+          privateUrl === null
+            ? editionHtml
+            : addPrivateEditionLink(editionHtml, privateUrl),
         dataDirectory: resolve(globalOptions.dataDir),
       });
       dependencies.stdout(
@@ -188,6 +221,25 @@ export async function runCli(
       dependencies.stdout("Removed the daily delivery schedule.\n");
     });
 
+  addPrivateSharingCommands(program, {
+    stdout: dependencies.stdout,
+    dataDirectory: () =>
+      resolve(program.opts<{ dataDir: string }>().dataDir),
+    createManager: (options) =>
+      createPrivateSharingManager(dependencies, options),
+    loadToday: async () => {
+      const runtime = await runtimeForCommand();
+      const edition = await runtime.musement.viewToday();
+      return {
+        localDate: edition.localDate,
+        timeZone:
+          runtime.configuration?.timezone ??
+          Intl.DateTimeFormat().resolvedOptions().timeZone,
+        html: formatEditionReviewAsHtml(edition),
+      };
+    },
+  });
+
   program
     .command("init")
     .description("Create an editable first-user configuration")
@@ -203,7 +255,7 @@ export async function runCli(
           mode: 0o600,
         });
       } catch (error) {
-        if (isErrorCode(error, "EEXIST")) {
+        if (hasErrorCode(error, "EEXIST")) {
           throw new Error(
             `Configuration already exists at ${configPath}; pass --force to replace it.`,
           );
@@ -523,6 +575,41 @@ function createProductionScheduler(): DailyScheduler {
   return new MacOsDailyScheduler({ executablePath });
 }
 
+async function createPrivateSharingManager(
+  dependencies: CliDependencies,
+  options: { dataDirectory: string; tailscalePath?: string },
+): Promise<PrivateSharingManager> {
+  const create =
+    dependencies.createPrivateSharingManager ??
+    createProductionPrivateSharingManager;
+  return create(options);
+}
+
+async function createProductionPrivateSharingManager(options: {
+  dataDirectory: string;
+  tailscalePath?: string;
+}): Promise<PrivateSharingManager> {
+  if (process.platform !== "darwin") {
+    throw new Error(
+      "Automatic private-site installation currently supports macOS; run `musement share serve` under your operating system's service manager.",
+    );
+  }
+  const executablePath = process.argv[1];
+  if (executablePath === undefined) {
+    throw new Error("Could not determine the installed Musement executable.");
+  }
+  const tailscalePath = await findTailscaleExecutable(options.tailscalePath);
+  const sharing = new PrivateEditionSharing({
+    dataDirectory: options.dataDirectory,
+  });
+  return new TailscalePrivateSharing({
+    dataDirectory: options.dataDirectory,
+    sharing,
+    tailscale: new TailscaleServe({ executablePath: tailscalePath }),
+    siteService: new MacOsPrivateSiteService({ executablePath }),
+  });
+}
+
 export function formatDailyEdition(edition: DailyEdition): string {
   const lines = [
     `Musement — ${edition.localDate}${edition.status === "degraded" ? " (degraded)" : ""}`,
@@ -575,14 +662,7 @@ function addEditionOutputOptions(command: Command): Command {
 }
 
 function currentLocalDate(timezone = Intl.DateTimeFormat().resolvedOptions().timeZone): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date());
-  const values = new Map(parts.map((part) => [part.type, part.value]));
-  return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
+  return localDateInTimezone(new Date(), timezone);
 }
 
 function parseInteger(value: string): number {
@@ -616,15 +696,6 @@ sources:
     url: https://example.com/feed.xml
     enabled: true
 `;
-}
-
-function isErrorCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === code
-  );
 }
 
 if (

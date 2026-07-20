@@ -5,6 +5,8 @@ import { resolve } from "node:path";
 
 import { z } from "zod";
 
+import { hasErrorCode } from "../node-error.js";
+
 export interface DailyEditionEmailSender {
   send(message: {
     localDate: string;
@@ -93,7 +95,7 @@ export class DailyEmailDelivery {
         ),
       );
     } catch (error) {
-      if (isErrorCode(error, "ENOENT")) {
+      if (hasErrorCode(error, "ENOENT")) {
         return { version: 1, deliveries: {} };
       }
       throw error;
@@ -150,13 +152,4 @@ async function acquireLock(lockPath: string): Promise<{ release(): Promise<void>
       await exited;
     },
   };
-}
-
-function isErrorCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    error.code === code
-  );
 }

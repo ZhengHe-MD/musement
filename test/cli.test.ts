@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -91,6 +91,44 @@ describe("Musement CLI", () => {
     );
   });
 
+  it("publishes /today and links it from email when private sharing is configured", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-private-deliver-"));
+    temporaryDirectories.push(directory);
+    await writeFile(
+      join(directory, "private-sharing.json"),
+      `${JSON.stringify({
+        version: 1,
+        privateUrl: "https://another-user.example.ts.net/musement/today",
+        port: 43_187,
+      })}\n`,
+    );
+    const deliveries: Array<{ html: string }> = [];
+
+    await runCli(
+      ["node", "musement", "--data-dir", directory, "deliver"],
+      {
+        stdout: () => undefined,
+        stderr: () => undefined,
+        createRuntime: async () => createFixtureRuntime(directory),
+        deliverEdition: async (request) => {
+          deliveries.push(request);
+          return {
+            status: "delivered",
+            emailAddress: "reader@example.com",
+            messageId: "gmail-private-link",
+          };
+        },
+      },
+    );
+
+    expect(deliveries[0]?.html).toContain(
+      'href="https://another-user.example.ts.net/musement/today"',
+    );
+    expect(
+      await readFile(join(directory, "private-site", "today.json"), "utf8"),
+    ).not.toContain("another-user.example.ts.net");
+  });
+
   it("installs the daily schedule without starting the editorial runtime", async () => {
     const directory = await mkdtemp(join(tmpdir(), "musement-schedule-cli-"));
     temporaryDirectories.push(directory);
@@ -151,6 +189,59 @@ describe("Musement CLI", () => {
     ]);
     expect(output.join("")).toContain(
       "Installed daily delivery at 08:30 Asia/Shanghai.",
+    );
+  });
+
+  it("installs private sharing with user-specific Tailscale discovery", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-share-cli-"));
+    temporaryDirectories.push(directory);
+    const installs: unknown[] = [];
+    const output: string[] = [];
+
+    await runCli(
+      [
+        "node",
+        "musement",
+        "--data-dir",
+        directory,
+        "share",
+        "install",
+        "--port",
+        "45123",
+        "--tailscale",
+        "/custom/tailscale",
+      ],
+      {
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+        createRuntime: async () => createFixtureRuntime(directory),
+        createPrivateSharingManager: async (options) => {
+          expect(options).toEqual({
+            dataDirectory: directory,
+            tailscalePath: "/custom/tailscale",
+          });
+          return {
+            install: async (options) => {
+              installs.push(options);
+              return {
+                privateUrl:
+                  "https://other-user.example.ts.net/musement/today",
+                plistPath: "/tmp/com.musement.private-site.plist",
+              };
+            },
+            status: async () => ({
+              status: "loaded",
+              privateUrl: "https://other-user.example.ts.net/musement/today",
+            }),
+            remove: async () => undefined,
+          };
+        },
+      },
+    );
+
+    expect(installs).toEqual([{ port: 45_123 }]);
+    expect(output.join("")).toContain(
+      "https://other-user.example.ts.net/musement/today",
     );
   });
 
