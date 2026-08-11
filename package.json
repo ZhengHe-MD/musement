@@ -5,7 +5,7 @@
   "description": "A deliberately small daily knowledge-exploration edition.",
   "type": "module",
   "bin": {
-    "musement": "./dist/cli.js"
+    "musement": "./dist/bin.js"
   },
   "engines": {
     "node": ">=24"
@@ -14,6 +14,7 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "dev": "tsx src/cli.ts",
+    "pretest": "npm run build",
     "provider:smoke": "tsx scripts/codex-app-server-smoke.ts",
     "start": "node dist/cli.js",
     "test": "vitest run",

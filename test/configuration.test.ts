@@ -54,6 +54,64 @@ sources:
     });
   });
 
+  it("accepts an optional proxy URL for source fetching", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "musement.yaml");
+    await writeFile(
+      path,
+      `version: 1
+timezone: Asia/Shanghai
+attention_budget_minutes: 25
+network:
+  proxy_url: http://127.0.0.1:7893
+interest_profile:
+  enduring: []
+  current: []
+  soft_suppressions: []
+sources:
+  - id: example-feed
+    name: Example Feed
+    kind: rss
+    url: https://example.com/feed.xml
+`,
+      "utf8",
+    );
+
+    const configuration = await loadConfiguration(path);
+
+    expect(configuration.network?.proxy_url).toBe("http://127.0.0.1:7893");
+  });
+
+  it("rejects a non-HTTP proxy URL", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-config-"));
+    temporaryDirectories.push(directory);
+    const path = join(directory, "musement.yaml");
+    await writeFile(
+      path,
+      `version: 1
+timezone: Asia/Shanghai
+attention_budget_minutes: 25
+network:
+  proxy_url: socks5://127.0.0.1:7891
+interest_profile:
+  enduring: []
+  current: []
+  soft_suppressions: []
+sources:
+  - id: example-feed
+    name: Example Feed
+    kind: rss
+    url: https://example.com/feed.xml
+`,
+      "utf8",
+    );
+
+    await expect(loadConfiguration(path)).rejects.toThrow(
+      "must be an HTTP or HTTPS proxy URL",
+    );
+  });
+
   it("rejects credentials embedded in source URLs", async () => {
     const directory = await mkdtemp(join(tmpdir(), "musement-config-"));
     temporaryDirectories.push(directory);

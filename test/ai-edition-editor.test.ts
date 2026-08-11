@@ -61,6 +61,7 @@ describe("AI-assisted editorial selection", () => {
       localDate: "2026-07-18",
       excludedDiscoveryIds: [],
       priorExposures: [],
+      priorEnlistments: [],
       feedbackEvidence: [],
     });
 
@@ -98,6 +99,63 @@ describe("AI-assisted editorial selection", () => {
     expect(findKeywordPaths(provider.lastRequest?.outputSchema, "oneOf")).toEqual(
       [],
     );
+  });
+
+  it("shows the editor short material ids and restores real ids in the edition", async () => {
+    const materials = [
+      material("material-important", "Consequential policy change"),
+      material("material-interesting", "A new view of animal cognition"),
+      material("material-wildcard", "How ancient pigments were manufactured"),
+    ];
+    const provider = new FixtureStructuredProvider({
+      slots: [
+        selection("important", "policy-change", "public-policy", "m001"),
+        selection(
+          "personally-interesting",
+          "animal-cognition",
+          "cognitive-science",
+          "m002",
+        ),
+        selection("wildcard", "ancient-pigments", "material-culture", "m003"),
+      ],
+      candidate_assessments: [
+        assessment("policy-change", "public-policy", ["m001"]),
+        assessment("animal-cognition", "cognitive-science", ["m002"]),
+        assessment("ancient-pigments", "material-culture", ["m003"]),
+      ],
+      shortlists: [
+        { role: "important", discovery_keys: ["policy-change"] },
+        { role: "personally-interesting", discovery_keys: ["animal-cognition"] },
+        { role: "wildcard", discovery_keys: ["ancient-pigments"] },
+      ],
+      decisions: ["Selected using short candidate ids."],
+    });
+    const editor = new AiEditionEditor({
+      configuration,
+      collector: { collect: async () => materials },
+      provider,
+    });
+
+    const draft = await editor.generate({
+      localDate: "2026-07-18",
+      excludedDiscoveryIds: [],
+      priorExposures: [],
+      priorEnlistments: [],
+      feedbackEvidence: [],
+    });
+
+    // The prompt carries short, mistake-resistant ids, not raw fingerprints.
+    expect(provider.lastRequest?.prompt).toContain('"id":"m001"');
+    expect(provider.lastRequest?.prompt).not.toContain('"id":"material-important"');
+    // The frozen edition carries the real Material id and fingerprint.
+    const important = draft.slots[0];
+    expect(important?.status).toBe("filled");
+    if (important?.status === "filled") {
+      expect(important.discovery.recommendedMaterial.id).toBe("material-important");
+      expect(important.discovery.recommendedMaterial.fingerprint).toBe(
+        "material-important".padEnd(64, "0"),
+      );
+    }
   });
 
   it("totals token usage across bounded broadening selections", async () => {
@@ -157,6 +215,7 @@ describe("AI-assisted editorial selection", () => {
       localDate: "2026-07-18",
       excludedDiscoveryIds: [],
       priorExposures: [],
+      priorEnlistments: [],
       feedbackEvidence: [],
     });
 
@@ -186,6 +245,192 @@ function findKeywordPaths(
     ...findKeywordPaths(child, keyword, `${path}.${key}`),
   ]);
 }
+
+describe("per-edition candidate sampling", () => {
+  it("bounds the candidate sample and lets every source take turns", async () => {
+    const materials = [
+      ...Array.from({ length: 200 }, (_, index) =>
+        fromSource(material(`archive-${index}`, `Archive episode ${index}`), "archive"),
+      ),
+      ...Array.from({ length: 5 }, (_, index) =>
+        fromSource(material(`blog-${index}`, `Blog essay ${index}`), "blog"),
+      ),
+    ];
+    const provider = new AssessingStructuredProvider();
+    const editor = new AiEditionEditor({
+      configuration: withSampling({ max_candidates: 20 }),
+      collector: { collect: async () => materials },
+      provider,
+    });
+
+    const draft = await editor.generate(sampledRequest());
+    const enlisted = promptPayload(provider).untrusted_materials;
+
+    expect(enlisted).toHaveLength(20);
+    expect(enlisted.filter((item) => item.source.id === "blog")).toHaveLength(5);
+    expect(enlisted.filter((item) => item.source.id === "archive")).toHaveLength(15);
+    expect(draft.trace.enlistedFingerprints).toHaveLength(20);
+  });
+
+  it("prefers Materials that have never been enlisted", async () => {
+    const materials = Array.from({ length: 10 }, (_, index) =>
+      material(`candidate-${index}`, `Candidate discovery ${index}`),
+    );
+    const provider = new AssessingStructuredProvider();
+    const editor = new AiEditionEditor({
+      configuration: withSampling({ max_candidates: 5 }),
+      collector: { collect: async () => materials },
+      provider,
+    });
+
+    const draft = await editor.generate({
+      ...sampledRequest(),
+      priorEnlistments: materials.slice(0, 5).map((item) => ({
+        fingerprint: item.fingerprint,
+        lastEnlistedAt: "2026-07-17T00:00:00.000Z",
+      })),
+    });
+
+    expect(draft.trace.enlistedFingerprints).toEqual(
+      materials.slice(5).map((item) => item.fingerprint),
+    );
+  });
+
+  it("re-enlists a Material once its cooldown has lapsed", async () => {
+    const materials = Array.from({ length: 4 }, (_, index) =>
+      material(`candidate-${index}`, `Candidate discovery ${index}`),
+    );
+    const provider = new AssessingStructuredProvider();
+    const editor = new AiEditionEditor({
+      configuration: withSampling({ max_candidates: 2, enlistment_cooldown_days: 30 }),
+      collector: { collect: async () => materials },
+      provider,
+    });
+
+    const draft = await editor.generate({
+      ...sampledRequest(),
+      priorEnlistments: [
+        { fingerprint: materials[0]!.fingerprint, lastEnlistedAt: "2026-01-01T00:00:00.000Z" },
+        { fingerprint: materials[1]!.fingerprint, lastEnlistedAt: "2026-07-17T00:00:00.000Z" },
+        { fingerprint: materials[2]!.fingerprint, lastEnlistedAt: "2026-07-16T00:00:00.000Z" },
+        { fingerprint: materials[3]!.fingerprint, lastEnlistedAt: "2026-02-01T00:00:00.000Z" },
+      ],
+    });
+
+    // Both lapsed Materials return, oldest first; the two still resting do not.
+    expect(draft.trace.enlistedFingerprints).toEqual([
+      materials[0]!.fingerprint,
+      materials[3]!.fingerprint,
+    ]);
+  });
+
+  it("truncates Material content for assessment without shortening the Material", async () => {
+    const long = {
+      ...material("long-material", "A very long recorded conversation"),
+      content: "sentence ".repeat(2000),
+      estimatedMinutes: 182,
+    };
+    const provider = new AssessingStructuredProvider();
+    const editor = new AiEditionEditor({
+      configuration: withSampling({ max_material_chars: 500 }),
+      collector: { collect: async () => [long] },
+      provider,
+    });
+
+    await editor.generate(sampledRequest());
+    const enlisted = promptPayload(provider).untrusted_materials[0];
+
+    expect(enlisted?.content).toContain("[Material truncated for editorial assessment");
+    expect(enlisted?.content.length).toBeLessThan(700);
+    expect(enlisted?.estimated_minutes).toBe(182);
+  });
+});
+
+function sampledRequest() {
+  return {
+    localDate: "2026-07-18",
+    excludedDiscoveryIds: [],
+    priorExposures: [],
+    priorEnlistments: [],
+    feedbackEvidence: [],
+  };
+}
+
+function fromSource(item: CollectedMaterial, sourceId: string): CollectedMaterial {
+  return { ...item, source: { id: sourceId, name: sourceId } };
+}
+
+function withSampling(
+  overrides: Partial<MusementConfiguration["edition_sampling"]>,
+): MusementConfiguration {
+  return {
+    ...configuration,
+    edition_sampling: { ...configuration.edition_sampling, ...overrides },
+  };
+}
+
+function promptPayload(provider: AssessingStructuredProvider): {
+  untrusted_materials: Array<{
+    content: string;
+    estimated_minutes: number;
+    source: { id: string };
+  }>;
+} {
+  const prompt = provider.lastRequest?.prompt ?? "";
+  return JSON.parse(prompt.slice(prompt.indexOf('{"local_date"')));
+}
+
+/**
+ * Answers whatever candidate sample it is given: every enlisted Material is
+ * assessed and found short of every role, so the sample itself is what the
+ * sampling tests observe.
+ */
+class AssessingStructuredProvider {
+  lastRequest: StructuredCompletionRequest | null = null;
+
+  async completeStructured<T>(
+    request: StructuredCompletionRequest,
+  ): Promise<StructuredCompletion<T>> {
+    this.lastRequest = request;
+    const payload = JSON.parse(
+      request.prompt.slice(request.prompt.indexOf('{"local_date"')),
+    ) as { untrusted_materials: Array<{ id: string }> };
+    return {
+      value: {
+        slots: selectionSlotRoleNames.map((role) => ({
+          role,
+          status: "unavailable",
+          reason: "No candidate met the quality floor in this sample.",
+        })),
+        candidate_assessments: payload.untrusted_materials.map((item) => ({
+          discovery_key: item.id,
+          topic_key: `topic-${item.id}`,
+          title: item.id.replaceAll("-", " "),
+          material_ids: [item.id],
+          evidence_status: "Supported by supplied Materials.",
+          uncertainty: null,
+          role_assessments: selectionSlotRoleNames.map((role) => ({
+            role,
+            eligible: false,
+            rationale: "Below the quality floor for this role.",
+          })),
+        })),
+        shortlists: selectionSlotRoleNames.map((role) => ({
+          role,
+          discovery_keys: [],
+        })),
+        decisions: ["No slot could be filled from this sample."],
+      } as T,
+      trace: { provider: "fixture", model: "fixture-model" },
+    };
+  }
+}
+
+const selectionSlotRoleNames = [
+  "important",
+  "personally-interesting",
+  "wildcard",
+] as const;
 
 class FixtureStructuredProvider {
   lastRequest: StructuredCompletionRequest | null = null;
@@ -317,6 +562,11 @@ const configuration: MusementConfiguration = {
   attention_budget_minutes: 25,
   provider_timeout_seconds: 300,
   cache_retention_days: 7,
+  edition_sampling: {
+    max_candidates: 120,
+    max_material_chars: 4000,
+    enlistment_cooldown_days: 30,
+  },
   interest_profile: {
     enduring: [
       {

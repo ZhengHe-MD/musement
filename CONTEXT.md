@@ -8,6 +8,10 @@ Musement is a personal knowledge-exploration system that curates a deliberately 
 The one canonical, immutable set of selections for a user's local calendar day. It is produced at the scheduled time or, if that run was missed, on first access, and it does not change when revisited or refreshed.
 _Avoid_: Daily feed, daily queue, refresh
 
+**Daily Edition Delivery**:
+The optional presentation of one canonical Daily Edition through a user-chosen surface such as self-addressed email or a private current-edition web page. Delivery creates no unread queue, reminder pressure, archive, or missed-day debt, and a failed delivery does not change or replace the edition.
+_Avoid_: Newsletter subscription, inbox task, reading reminder
+
 **Generation Attempt**:
 A retryable effort to produce a Daily Edition. A pending or failed attempt is not an edition and records its failure reason without freezing a result for that day.
 _Avoid_: Failed edition, degraded edition, draft edition
@@ -116,4 +120,44 @@ _Avoid_: Personalized importance, productivity recommendation
 The Daily Edition Discovery outside the user's established interests or recent exposure patterns that still has an explainable reason to reward attention. Unfamiliarity alone is insufficient; the Discovery and its recommended Material must satisfy the same quality floor as the other Selection Slots.
 _Avoid_: Random item, novelty for novelty's sake
 
-A Discovery may qualify for more than one Selection Slot. It occupies the slot it satisfies most distinctly, and another Discovery fills each remaining slot.
+**Knowledge Durability Pyramid**:
+The hierarchical categorization of candidate materials and feeds by their epistemic half-life and temporal stability, separating timeless foundations from fast-moving peripheral awareness.
+_Avoid_: Priority queue, importance ranking, engagement score
+
+**Evergreen Tier**:
+The foundational layer of the Knowledge Durability Pyramid containing timeless principles, enduring scientific laws, foundational philosophy, history, and structural mental models whose value remains stable across decades.
+_Avoid_: Old news, archive, classic tag
+
+**Emerging Tier**:
+The middle layer of the Knowledge Durability Pyramid containing substantial analyses, paradigm shifts, architectural discussions, deep-dive podcast conversations, and multi-year evolutionary trends whose relevance spans months to years.
+_Avoid_: Medium priority, trend feed, news analysis
+
+**Horizon Tier**:
+The top layer of the Knowledge Durability Pyramid containing fast-changing releases, current events, immediate debates, and peripheral ambient developments whose utility can expire within days or weeks.
+_Avoid_: Breaking news, ticker, noise
+
+**Curated Encounter**:
+A user-initiated request to select a bounded set of unexposed Discoveries from the Candidate Pool matching a free-form question or Curiosity Direction, evaluated in two stages: keyword-based candidate retrieval first, followed by AI editorial ranking and reasoning second.
+_Avoid_: Daily push, periodic feed, automated newsletter
+
+**Candidate Pool**:
+The durable local collection of unexposed Materials gathered from configured sources, partitioned into Knowledge Durability Tiers for inspection, source browsing, or on-demand curated selection.
+_Avoid_: Unread backlog, reading queue, permanent article library
+
+**Curiosity Direction**:
+An optional, transient thematic focus or free-form question provided at pull time that guides two-stage candidate retrieval and editorial selection without permanently mutating the user's Interest Profile.
+_Avoid_: Filter query, permanent category, profile tag
+
+**Exposure**:
+An explicit record that a Discovery has been presented to and acknowledged by the user (via Curated Encounter, direct source reading, or a Remote Exposure Callback), rendering it ineligible for future editorial selection unless its underlying subject has materially changed.
+_Avoid_: Read count, impression, view tracking
+
+**GitHub RSS Delivery**:
+The publication of Curated Encounters and Knowledge Durability Pyramid candidate streams (`curated.xml`, `pool-evergreen.xml`, `pool-emerging.xml`, `pool-horizon.xml`) alongside an interactive portal to a user's GitHub Pages repository.
+_Avoid_: Web portal, cloud sync server, centralized reader
+
+**Remote Exposure Callback**:
+An asynchronous GitHub-backed action link in RSS entries that records external read interactions and persists them back to Musement's local exposure state.
+_Avoid_: Webhook server, remote API daemon, real-time sync socket
+
+

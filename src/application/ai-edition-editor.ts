@@ -10,6 +10,7 @@ import {
   type CollectedMaterial,
   type DailyEditionDraft,
   type EditionEditor,
+  type EnlistmentEvidence,
   type GenerationTokenUsage,
   type GenerateEditionRequest,
   type SelectionSlot,
@@ -20,7 +21,7 @@ import type {
   StructuredProvider,
 } from "../infrastructure/codex-app-server-provider.js";
 
-interface MaterialCollector {
+export interface MaterialCollector {
   collect(sources: ConfiguredSource[]): Promise<CollectedMaterial[]>;
   broaden?(materials: CollectedMaterial[]): Promise<CollectedMaterial[]>;
 }
@@ -97,7 +98,15 @@ export class AiEditionEditor implements EditionEditor {
   async generate(request: GenerateEditionRequest): Promise<DailyEditionDraft> {
     const tokenUsages: GenerationTokenUsage[] = [];
     let completedProviderCalls = 0;
+    
+    let broadened = false;
+    let broadeningDurationMs: number | undefined;
+
+    const collectStart = performance.now();
     let collected = await this.#collector.collect(this.#configuration.sources);
+    const collectionDurationMs = Math.round(performance.now() - collectStart);
+    let candidatesCollected = collected.length;
+
     const priorFingerprints = new Set(
       request.priorExposures.flatMap((item) => item.materialFingerprints),
     );
@@ -107,9 +116,31 @@ export class AiEditionEditor implements EditionEditor {
     let eligibleMaterials = assessments.flatMap((assessment) =>
       assessment.eligible ? [assessment.material] : [],
     );
+    let enlistedMaterials = sampleCandidates(
+      eligibleMaterials,
+      request.priorEnlistments,
+      this.#configuration.edition_sampling,
+      request.localDate,
+    );
+    let candidatesEligible = eligibleMaterials.length;
+    let candidatesEnlisted = enlistedMaterials.length;
+
     const select = async () => {
+      // Present short, mistake-resistant ids to the editor rather than 64-char
+      // fingerprints, which the model can truncate when echoing them back, then
+      // translate its answer to real ids so the rest of the pipeline is unchanged.
+      const promptMaterials = enlistedMaterials.map((material, index) => ({
+        ...material,
+        id: shortMaterialId(index),
+      }));
+      const realIdByShortId = new Map(
+        enlistedMaterials.map((material, index) => [
+          shortMaterialId(index),
+          material.id,
+        ]),
+      );
       const completionRequest: StructuredCompletionRequest = {
-        prompt: buildEditorialPrompt(request, this.#configuration, eligibleMaterials),
+        prompt: buildEditorialPrompt(request, this.#configuration, promptMaterials),
         outputSchema: editorialOutputSchema,
         effort: "high",
       };
@@ -119,15 +150,22 @@ export class AiEditionEditor implements EditionEditor {
         tokenUsages.push(completion.trace.tokenUsage);
       }
       const response = editorialResponseSchema.parse(completion.value);
-      validateEditorialResponse(response, eligibleMaterials);
+      restoreMaterialIds(response, realIdByShortId);
+      validateEditorialResponse(response, enlistedMaterials);
       return { completion, response };
     };
+
+    const aiGenStart = performance.now();
     let { completion, response } = await select();
     if (
       response.slots.some((slot) => slot.status === "unavailable") &&
       this.#collector.broaden !== undefined
     ) {
+      broadened = true;
+      const broadenStart = performance.now();
       const additional = await this.#collector.broaden(collected);
+      broadeningDurationMs = Math.round(performance.now() - broadenStart);
+      
       if (additional.length > 0) {
         const byFingerprint = new Map(
           [...collected, ...additional].map((material) => [material.fingerprint, material]),
@@ -139,6 +177,12 @@ export class AiEditionEditor implements EditionEditor {
         eligibleMaterials = assessments.flatMap((assessment) =>
           assessment.eligible ? [assessment.material] : [],
         );
+        enlistedMaterials = sampleCandidates(
+          eligibleMaterials,
+          request.priorEnlistments,
+          this.#configuration.edition_sampling,
+          request.localDate,
+        );
         ({ completion, response } = await select());
         response.decisions.unshift(
           `Broadened collection through ${additional.length} referenced public Material(s).`,
@@ -149,15 +193,28 @@ export class AiEditionEditor implements EditionEditor {
         );
       }
     }
+    const aiGenerationDurationMs = Math.round(performance.now() - aiGenStart);
 
     return {
       localDate: request.localDate,
+      generationMetrics: {
+        collectionDurationMs,
+        candidatesCollected,
+        candidatesEligible,
+        candidatesEnlisted,
+        aiGenerationDurationMs,
+        broadened,
+        ...(broadeningDurationMs !== undefined ? { broadeningDurationMs } : {}),
+      },
       slots: assembleSlots(
         response,
-        eligibleMaterials,
+        enlistedMaterials,
         this.#configuration.attention_budget_minutes,
       ),
       trace: {
+        enlistedFingerprints: enlistedMaterials.map(
+          (material) => material.fingerprint,
+        ),
         candidates: assessments.map((assessment) => ({
           materialId: assessment.material.id,
           fingerprint: assessment.material.fingerprint,
@@ -170,6 +227,8 @@ export class AiEditionEditor implements EditionEditor {
           derivedSummary: assessment.material.summary,
           eligible: assessment.eligible,
           ruleOutcomes: assessment.ruleOutcomes,
+          estimatedMinutes: assessment.material.estimatedMinutes,
+          contentLength: assessment.material.content.length,
         })),
         decisions: response.decisions,
         assessments: response.candidate_assessments,
@@ -247,6 +306,108 @@ function assessCodedEligibility(
   return { material, eligible: outcomes.length === 1 && outcomes[0]?.startsWith("eligible") === true, ruleOutcomes: outcomes };
 }
 
+function shortMaterialId(index: number): string {
+  return `m${String(index + 1).padStart(3, "0")}`;
+}
+
+/**
+ * Map the editor's short material references back to real Material ids. An
+ * unknown short id is left as-is so response validation still rejects it.
+ */
+function restoreMaterialIds(
+  response: EditorialResponse,
+  realIdByShortId: ReadonlyMap<string, string>,
+): void {
+  const toReal = (id: string): string => realIdByShortId.get(id) ?? id;
+  for (const assessment of response.candidate_assessments) {
+    assessment.material_ids = assessment.material_ids.map(toReal);
+  }
+  for (const slot of response.slots) {
+    if (slot.status === "filled") {
+      slot.recommended_material_id = toReal(slot.recommended_material_id);
+      slot.alternative_material_ids =
+        slot.alternative_material_ids.map(toReal);
+    }
+  }
+}
+
+function truncateForAssessment(content: string, limit: number): string {
+  return content.length <= limit
+    ? content
+    : `${content.slice(0, limit)} [Material truncated for editorial assessment; the complete Material remains at its URL.]`;
+}
+
+/**
+ * Bound one edition's candidate set without narrowing eligibility. Materials
+ * never enlisted come first, then those whose cooldown has lapsed, and sources
+ * take turns so one large archive cannot crowd out the rest of the Portfolio.
+ */
+function sampleCandidates(
+  eligible: CollectedMaterial[],
+  priorEnlistments: EnlistmentEvidence[],
+  sampling: MusementConfiguration["edition_sampling"],
+  localDate: string,
+): CollectedMaterial[] {
+  if (eligible.length <= sampling.max_candidates) {
+    return eligible;
+  }
+  const enlistedAt = new Map(
+    priorEnlistments.map((item) => [
+      item.fingerprint,
+      Date.parse(item.lastEnlistedAt),
+    ]),
+  );
+  const cooldownCutoff =
+    Date.parse(localDate) -
+    sampling.enlistment_cooldown_days * 24 * 60 * 60 * 1000;
+  const rank = (material: CollectedMaterial): number => {
+    const enlisted = enlistedAt.get(material.fingerprint);
+    if (enlisted === undefined) return 0;
+    return enlisted < cooldownCutoff ? 1 : 2;
+  };
+
+  const bySource = new Map<string, CollectedMaterial[]>();
+  for (const material of eligible) {
+    const queue = bySource.get(material.source.id);
+    if (queue === undefined) {
+      bySource.set(material.source.id, [material]);
+    } else {
+      queue.push(material);
+    }
+  }
+  for (const queue of bySource.values()) {
+    queue.sort((left, right) => {
+      const byRank = rank(left) - rank(right);
+      if (byRank !== 0) return byRank;
+      const byEnlisted =
+        (enlistedAt.get(left.fingerprint) ?? 0) -
+        (enlistedAt.get(right.fingerprint) ?? 0);
+      if (byEnlisted !== 0) return byEnlisted;
+      return publishedTime(right) - publishedTime(left);
+    });
+  }
+
+  const queues = [...bySource.values()];
+  const sampled: CollectedMaterial[] = [];
+  while (sampled.length < sampling.max_candidates) {
+    let drained = true;
+    for (const queue of queues) {
+      const next = queue.shift();
+      if (next === undefined) continue;
+      drained = false;
+      sampled.push(next);
+      if (sampled.length === sampling.max_candidates) break;
+    }
+    if (drained) break;
+  }
+  return sampled;
+}
+
+function publishedTime(material: CollectedMaterial): number {
+  const parsed = Date.parse(material.publishedAt ?? "");
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 function buildEditorialPrompt(
   request: GenerateEditionRequest,
   configuration: MusementConfiguration,
@@ -271,7 +432,10 @@ function buildEditorialPrompt(
       published_at: material.publishedAt,
       format: material.format,
       summary: material.summary,
-      content: material.content,
+      content: truncateForAssessment(
+        material.content,
+        configuration.edition_sampling.max_material_chars,
+      ),
       estimated_minutes: material.estimatedMinutes,
       source: material.source,
       provenance: material.provenance,

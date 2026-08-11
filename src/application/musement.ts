@@ -18,14 +18,31 @@ import {
   type QuickFeedback,
   type SelectionSlotRole,
   selectionSlotRoles,
+  type CandidateSnapshot,
+  type CandidatePoolItem,
+  type CandidatePoolSourceSummary,
+  type CuratedEncounter,
+  type SelectedDiscovery,
+  type DurabilityTier,
 } from "../domain/contracts.js";
+import type { MaterialCollector } from "./ai-edition-editor.js";
+import type { OnlinePullEditor } from "./online-pull-editor.js";
+import { DurabilityClassifier } from "./durability-classifier.js";
+import type { GitHubRssPublisher } from "../infrastructure/github-rss-publisher.js";
+import type { MusementConfiguration } from "../config/configuration.js";
+import { localDateInTimezone } from "../local-date.js";
 
 export interface MusementDependencies {
   store: EditionStore;
   editor: EditionEditor;
   clock: Clock;
   timezone: string;
-  interestProfile?: InterestProfileUpdater;
+  interestProfile?: InterestProfileUpdater | undefined;
+  collector?: MaterialCollector | undefined;
+  pullEditor?: OnlinePullEditor | undefined;
+  classifier?: DurabilityClassifier | undefined;
+  rssPublisher?: GitHubRssPublisher | undefined;
+  configuration?: MusementConfiguration | undefined;
 }
 
 export class Musement {
@@ -34,6 +51,11 @@ export class Musement {
   readonly #clock: Clock;
   readonly #timezone: string;
   readonly #interestProfile: InterestProfileUpdater | null;
+  readonly #collector: MaterialCollector | null;
+  readonly #pullEditor: OnlinePullEditor | null;
+  readonly #classifier: DurabilityClassifier | null;
+  readonly #rssPublisher: GitHubRssPublisher | null;
+  readonly #configuration: MusementConfiguration | null;
 
   constructor(dependencies: MusementDependencies) {
     this.#store = dependencies.store;
@@ -41,6 +63,11 @@ export class Musement {
     this.#clock = dependencies.clock;
     this.#timezone = dependencies.timezone;
     this.#interestProfile = dependencies.interestProfile ?? null;
+    this.#collector = dependencies.collector ?? null;
+    this.#pullEditor = dependencies.pullEditor ?? null;
+    this.#classifier = dependencies.classifier ?? new DurabilityClassifier();
+    this.#rssPublisher = dependencies.rssPublisher ?? null;
+    this.#configuration = dependencies.configuration ?? null;
   }
 
   async viewToday(): Promise<DailyEdition> {
@@ -68,23 +95,60 @@ export class Musement {
         localDate,
         excludedDiscoveryIds,
         priorExposures,
+        priorEnlistments: this.#store.listEnlistmentEvidence(),
         feedbackEvidence: this.#store.listFeedbackEvidence(),
       });
       assertValidDraft(draft, localDate, priorExposures);
+      this.#store.recordEnlistments(
+        draft.trace.enlistedFingerprints ?? [],
+        now.toISOString(),
+      );
+
+      const snapshots: CandidateSnapshot[] = (draft.trace.candidates as any[]).map((c: any) => ({
+        fingerprint: c.fingerprint,
+        sourceId: c.source.id,
+        sourceName: c.source.name,
+        title: c.title,
+        url: c.url,
+        author: c.author ?? null,
+        publishedAt: c.publishedAt ?? null,
+        fetchedAt: now.toISOString(),
+        estimatedMinutes: c.estimatedMinutes ?? 0,
+        contentLength: c.contentLength ?? 0,
+        eligible: c.eligible,
+        ruleOutcomes: c.ruleOutcomes ?? [],
+      }));
+      this.#store.saveCandidateSnapshot(localDate, snapshots);
+
+      const eligibleCount = snapshots.filter((c) => c.eligible).length;
+      let editionQuality: "normal" | "low-signal-day" | "source-gap" = "normal";
+      const unavailableCount = draft.slots.filter((s) => s.status === "unavailable").length;
+      if (unavailableCount === 3) {
+        editionQuality = "low-signal-day";
+      } else if (unavailableCount > 0 && eligibleCount < 3) {
+        editionQuality = "source-gap";
+      }
+
+      for (const slot of draft.slots) {
+        if (slot.status === "unavailable") {
+          slot.degradationCause = eligibleCount < 3 ? "source-poverty" : "quality-floor";
+          slot.candidatesEvaluated = eligibleCount;
+        }
+      }
 
       const edition: DailyEdition = {
         ...draft,
         id: randomUUID(),
         generatedAt: now.toISOString(),
-        status: draft.slots.some((slot) => slot.status === "unavailable")
-          ? "degraded"
-          : "complete",
+        status: unavailableCount > 0 ? "degraded" : "complete",
+        editionQuality,
       };
 
       const canonicalEdition = this.#store.saveCanonicalEdition(edition);
       this.#store.finishGenerationAttempt(attempt.id, {
         status: "succeeded",
         finishedAt: this.#clock.now().toISOString(),
+        ...(draft.generationMetrics ? { metrics: draft.generationMetrics } : {}),
       });
       return canonicalEdition;
     } catch (error) {
@@ -103,6 +167,10 @@ export class Musement {
 
   edition(localDate: string): DailyEdition | null {
     return this.#store.findEdition(localDate);
+  }
+
+  candidateSnapshot(localDate: string): CandidateSnapshot[] {
+    return this.#store.loadCandidateSnapshot(localDate);
   }
 
   selectDiscovery(input: {
@@ -316,6 +384,216 @@ export class Musement {
     this.#store.saveMvpEvaluation(evaluation);
     return evaluation;
   }
+
+  async collect(options?: { syncRemote?: boolean }): Promise<{
+    collectedCount: number;
+    remoteExposuresSynced: number;
+  }> {
+    const now = this.#clock.now();
+    let collectedCount = 0;
+    if (this.#collector && this.#configuration) {
+      const enabledSources = this.#configuration.sources.filter((s) => s.enabled);
+      const materials = await this.#collector.collect(enabledSources);
+      
+      const tierMap = this.#classifier
+        ? await this.#classifier.classifyMaterials(materials)
+        : new Map<string, DurabilityTier>();
+
+      const poolItems: CandidatePoolItem[] = materials.map((m) => ({
+        fingerprint: m.fingerprint,
+        sourceId: m.source.id,
+        sourceName: m.source.name,
+        title: m.title,
+        url: m.url,
+        author: m.author,
+        publishedAt: m.publishedAt,
+        fetchedAt: now.toISOString(),
+        summary: m.summary,
+        content: m.content,
+        estimatedMinutes: m.estimatedMinutes,
+        format: m.format,
+        durabilityTier: tierMap.get(m.fingerprint) ?? "emerging",
+        provenance: m.provenance,
+        referencedUrls: m.referencedUrls,
+        isExposed: false,
+        exposedAt: null,
+      }));
+      this.#store.savePoolMaterials(poolItems);
+      collectedCount = poolItems.length;
+    }
+
+    let remoteExposuresSynced = 0;
+    if (this.#rssPublisher && options?.syncRemote !== false) {
+      const remote = await this.#rssPublisher.syncRemoteExposures();
+      if (remote.length > 0) {
+        this.#store.markPoolMaterialsExposed(
+          remote.map((r) => r.fingerprint),
+          now.toISOString(),
+        );
+        remoteExposuresSynced = remote.length;
+      }
+    }
+
+    if (this.#rssPublisher) {
+      await this.publishFeeds();
+    }
+
+    return { collectedCount, remoteExposuresSynced };
+  }
+
+  async pullCurated(options?: {
+    count?: number | undefined;
+    direction?: string | undefined;
+    durabilityTier?: DurabilityTier | undefined;
+  }): Promise<CuratedEncounter> {
+    const now = this.#clock.now();
+    const count = options?.count ?? 3;
+    const direction = options?.direction;
+    const durabilityTier = options?.durabilityTier;
+
+    if (this.#rssPublisher) {
+      const remote = await this.#rssPublisher.syncRemoteExposures();
+      if (remote.length > 0) {
+        this.#store.markPoolMaterialsExposed(
+          remote.map((r) => r.fingerprint),
+          now.toISOString(),
+        );
+      }
+    }
+
+    const unexposed = this.#store.listUnexposedPoolMaterials(undefined, durabilityTier);
+    let encounter: CuratedEncounter;
+    if (this.#pullEditor) {
+      encounter = await this.#pullEditor.selectCuratedEncounter({
+        poolMaterials: unexposed,
+        request: { count, direction, durabilityTier },
+        now,
+      });
+    } else {
+      const sample = unexposed.slice(0, count);
+      const discoveries: SelectedDiscovery[] = sample.map((item) => ({
+        id: item.fingerprint.slice(0, 16),
+        subjectKey: item.sourceId,
+        subjectTerms: [item.sourceName],
+        title: item.title,
+        summary: item.summary,
+        slotReason: "Selected from candidate pool",
+        evidenceStatus: "Source verified",
+        recommendedMaterial: {
+          id: item.fingerprint,
+          fingerprint: item.fingerprint,
+          title: item.title,
+          author: item.author ?? "Unknown",
+          source: item.sourceName,
+          format: item.format,
+          url: item.url,
+          meaningfulEntryMinutes: Math.min(item.estimatedMinutes, 10),
+          fullLengthMinutes: item.estimatedMinutes,
+          provenance: item.provenance,
+        },
+        alternativeMaterials: [],
+      }));
+      encounter = {
+        id: randomUUID(),
+        pulledAt: now.toISOString(),
+        direction: direction ?? null,
+        count: discoveries.length,
+        discoveries,
+        trace: {
+          candidates: sample.map((s) => ({
+            fingerprint: s.fingerprint,
+            title: s.title,
+          })),
+          decisions: ["Fallback selection without online AI editor"],
+          provider: {
+            name: "fallback",
+            model: "none",
+            promptVersion: "1",
+            schemaVersion: "1",
+          },
+        },
+      };
+    }
+
+    this.#store.saveCuratedEncounter(encounter);
+    const exposedFingerprints = encounter.discoveries.flatMap((d) => [
+      d.recommendedMaterial.fingerprint,
+      ...d.alternativeMaterials.map((m) => m.fingerprint),
+    ]);
+    this.#store.markPoolMaterialsExposed(exposedFingerprints, now.toISOString());
+
+    if (this.#rssPublisher) {
+      await this.publishFeeds();
+    }
+
+    return encounter;
+  }
+
+  browsePool(options?: {
+    sourceId?: string | undefined;
+    durabilityTier?: DurabilityTier | undefined;
+  } | string): CandidatePoolItem[] {
+    if (typeof options === "string") {
+      return this.#store.listUnexposedPoolMaterials(options);
+    }
+    return this.#store.listUnexposedPoolMaterials(
+      options?.sourceId,
+      options?.durabilityTier,
+    );
+  }
+
+  getPoolSummary(): CandidatePoolSourceSummary[] {
+    return this.#store.listPoolSourcesSummary();
+  }
+
+  async reclassifyPool(options?: {
+    forceAll?: boolean;
+  }): Promise<{ reclassifiedCount: number }> {
+    const unexposed = this.#store.listUnexposedPoolMaterials();
+    if (unexposed.length === 0) {
+      return { reclassifiedCount: 0 };
+    }
+
+    const tierMap = this.#classifier
+      ? await this.#classifier.classifyMaterials(unexposed)
+      : new Map<string, DurabilityTier>();
+
+    for (const item of unexposed) {
+      const tier = tierMap.get(item.fingerprint);
+      if (tier) {
+        this.#store.updateMaterialDurabilityTier(item.fingerprint, tier);
+      }
+    }
+
+    if (this.#rssPublisher) {
+      await this.publishFeeds();
+    }
+
+    return { reclassifiedCount: unexposed.length };
+  }
+
+  async markPoolItemRead(fingerprint: string): Promise<void> {
+    const now = this.#clock.now();
+    this.#store.markPoolMaterialsExposed([fingerprint], now.toISOString());
+    if (this.#rssPublisher) {
+      await this.publishFeeds();
+    }
+  }
+
+  async markSourceRead(sourceId: string): Promise<void> {
+    const now = this.#clock.now();
+    this.#store.markSourceExposed(sourceId, now.toISOString());
+    if (this.#rssPublisher) {
+      await this.publishFeeds();
+    }
+  }
+
+  async publishFeeds(): Promise<{ curatedXmlPath: string; poolXmlPath: string } | null> {
+    if (!this.#rssPublisher) return null;
+    const curatedEncounters = this.#store.listCuratedEncounters();
+    const poolMaterials = this.#store.listUnexposedPoolMaterials();
+    return this.#rssPublisher.publish({ curatedEncounters, poolMaterials });
+  }
 }
 
 function oneMonthAfter(value: string): Date {
@@ -326,17 +604,6 @@ function oneMonthAfter(value: string): Date {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown generation failure";
-}
-
-function localDateInTimezone(date: Date, timezone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: timezone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(date);
-  const values = new Map(parts.map((part) => [part.type, part.value]));
-  return `${values.get("year")}-${values.get("month")}-${values.get("day")}`;
 }
 
 function assertValidDraft(
