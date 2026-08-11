@@ -415,6 +415,117 @@ describe("Musement CLI", () => {
       safeForMusement: true,
     });
   });
+
+  it("runs on-demand pull and formats curated encounter", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-pull-cli-"));
+    temporaryDirectories.push(directory);
+    const store = new SqliteMusementStore(join(directory, "musement.sqlite"));
+    store.savePoolMaterials([
+      {
+        fingerprint: "pull-fp-1",
+        sourceId: "phys-source",
+        sourceName: "Physics Daily",
+        title: "Quantum State Superposition",
+        url: "https://example.com/physics",
+        author: "Alice",
+        publishedAt: "2026-08-09T08:00:00Z",
+        fetchedAt: "2026-08-09T08:00:00Z",
+        summary: "Superposition experiment results.",
+        content: "Detailed content on quantum states.",
+        estimatedMinutes: 6,
+        format: "paper",
+        provenance: ["https://example.com/feed.xml"],
+        referencedUrls: [],
+        isExposed: false,
+        exposedAt: null,
+      },
+    ]);
+
+    const musement = new Musement({
+      store,
+      editor: new FixtureEditor(),
+      clock: { now: () => new Date("2026-08-09T12:00:00Z") },
+      timezone: "Asia/Shanghai",
+    });
+
+    const output: string[] = [];
+    await runCli(
+      ["node", "musement", "pull", "-n", "1", "--direction", "Quantum Physics"],
+      {
+        stdout: (text) => output.push(text),
+        stderr: () => undefined,
+        createRuntime: async () => ({
+          musement,
+          close: () => store.close(),
+        }),
+      },
+    );
+
+    const resultText = output.join("");
+    expect(resultText).toContain("Musement Curated Encounter");
+    expect(resultText).toContain('Direction: "Quantum Physics"');
+    expect(resultText).toContain("Quantum State Superposition");
+  });
+
+  it("inspects candidate pool summary and marks item read", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "musement-pool-cli-"));
+    temporaryDirectories.push(directory);
+    const store = new SqliteMusementStore(join(directory, "musement.sqlite"));
+    store.savePoolMaterials([
+      {
+        fingerprint: "pool-fp-1",
+        sourceId: "ai-source",
+        sourceName: "AI Research",
+        title: "Transformer Efficiency",
+        url: "https://example.com/transformer",
+        author: "Bob",
+        publishedAt: "2026-08-09T08:00:00Z",
+        fetchedAt: "2026-08-09T08:00:00Z",
+        summary: "Faster attention mechanisms.",
+        content: "Content about transformers.",
+        estimatedMinutes: 8,
+        format: "article",
+        provenance: ["https://example.com/feed.xml"],
+        referencedUrls: [],
+        isExposed: false,
+        exposedAt: null,
+      },
+    ]);
+
+    const makeRuntime = (): Runtime => {
+      const storeInstance = new SqliteMusementStore(join(directory, "musement.sqlite"));
+      const musement = new Musement({
+        store: storeInstance,
+        editor: new FixtureEditor(),
+        clock: { now: () => new Date("2026-08-09T12:00:00Z") },
+        timezone: "Asia/Shanghai",
+      });
+      return {
+        musement,
+        close: () => storeInstance.close(),
+      };
+    };
+
+    const summaryOutput: string[] = [];
+    await runCli(["node", "musement", "pool"], {
+      stdout: (text) => summaryOutput.push(text),
+      stderr: () => undefined,
+      createRuntime: async () => makeRuntime(),
+    });
+    expect(summaryOutput.join("")).toContain("AI Research: 1 unexposed / 1 total");
+
+    const markOutput: string[] = [];
+    await runCli(["node", "musement", "pool", "mark-read", "pool-fp-1"], {
+      stdout: (text) => markOutput.push(text),
+      stderr: () => undefined,
+      createRuntime: async () => makeRuntime(),
+    });
+    expect(markOutput.join("")).toContain("Marked 1 material(s) as read.");
+
+    const verifyStore = new SqliteMusementStore(join(directory, "musement.sqlite"));
+    expect(verifyStore.listUnexposedPoolMaterials()).toHaveLength(0);
+    verifyStore.close();
+  });
 });
 
 function createFixtureRuntime(directory: string): Runtime {

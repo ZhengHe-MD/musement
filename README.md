@@ -34,7 +34,31 @@ npm run provider:smoke
 
 `doctor` reports the active authentication mode and current rate-limit state. The smoke test uses the same zero-filesystem, zero-network editorial permission profile as production. A provider or subscription outage fails the smoke test and later remains a retryable Generation Attempt; Musement never switches to separately billed API usage.
 
-## Daily use
+## On-Demand Use & Candidate Pool
+
+```sh
+# Daily collection & RSS export
+musement collect
+
+# On-demand curated encounters with optional direction
+musement pull
+musement pull -n 3 --direction "Quantum Physics"
+musement pull --html > encounter.html
+open encounter.html # macOS
+
+# Candidate pool browsing & source management
+musement pool
+musement pool list --source arxiv-physics
+musement pool mark-read FINGERPRINT
+musement pool mark-read --source arxiv-physics
+
+# Export RSS feeds to GitHub Pages
+musement feeds publish
+```
+
+`collect` gathers fresh materials from configured sources, syncs remote read callbacks from GitHub, and updates RSS feeds. `pull` runs online AI editorial ranking to select fresh, novel, unexposed discoveries on demand based on your curiosity direction.
+
+## Daily Edition (Legacy Push Mode)
 
 ```sh
 musement today
@@ -47,8 +71,6 @@ musement feedback 2026-07-18 --slot important --kind good-pick
 musement select 2026-07-18 --slot important
 musement outbox --after 0
 ```
-
-`today` generates on first access and returns the same frozen edition thereafter. `generate` is an equivalent explicit command suitable for `cron` or `launchd`; Musement has no built-in scheduler.
 
 ## Gmail self-delivery on macOS
 

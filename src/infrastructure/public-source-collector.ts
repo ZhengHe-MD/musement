@@ -4,10 +4,10 @@ import { isIP } from "node:net";
 
 import { XMLParser } from "fast-xml-parser";
 import ipaddr from "ipaddr.js";
-import { Agent, fetch as undiciFetch } from "undici";
+import { Agent, ProxyAgent, fetch as undiciFetch } from "undici";
 
 import type { ConfiguredSource } from "../config/configuration.js";
-import type { CollectedMaterial } from "../domain/contracts.js";
+import type { CollectedMaterial, MaterialFormat, SourceProbeResult } from "../domain/contracts.js";
 
 interface SourceContentCache {
   get(url: string, retentionDays?: number): Promise<string | null>;
@@ -43,6 +43,46 @@ export class PublicSourceCollector {
       }
     }
     return [...byUrl.values()];
+  }
+
+  async probe(sources: ConfiguredSource[]): Promise<SourceProbeResult[]> {
+    const results: SourceProbeResult[] = [];
+    for (const source of sources.filter((s) => s.enabled)) {
+      const start = performance.now();
+      try {
+        const body = await this.#fetchSource(source);
+        let items: CollectedMaterial[];
+        switch (source.kind) {
+          case "rss":
+          case "atom":
+            items = parseXmlFeed(body, source);
+            break;
+          case "json-feed":
+            items = parseJsonFeed(body, source);
+            break;
+          case "web":
+            items = parseWebPage(body, source);
+            break;
+        }
+        results.push({
+          sourceId: source.id,
+          sourceName: source.name,
+          status: "ok",
+          itemCount: items.length,
+          durationMs: Math.round(performance.now() - start),
+        });
+      } catch (error) {
+        results.push({
+          sourceId: source.id,
+          sourceName: source.name,
+          status: "failed",
+          itemCount: 0,
+          durationMs: Math.round(performance.now() - start),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return results;
   }
 
   async broaden(materials: CollectedMaterial[]): Promise<CollectedMaterial[]> {
@@ -182,12 +222,46 @@ function assertPublicSourceUrl(value: string): void {
 
 const safeDispatcher = new Agent({ connect: { lookup: safeLookup } });
 
-function safePublicFetch(
+export function safePublicFetch(
   input: string,
   init?: RequestInit,
 ): Promise<Response> {
   const request = { ...init, dispatcher: safeDispatcher };
   return undiciFetch(input, request as never) as unknown as Promise<Response>;
+}
+
+/**
+ * Build the fetcher used for source collection. With a proxy URL, requests go
+ * through that proxy — which does its own DNS and egress — so the direct-DNS
+ * SSRF guard cannot run; the URL-literal guard in {@link assertPublicSourceUrl}
+ * still refuses localhost and private-IP targets on every fetched URL. Without a
+ * proxy, the direct safe-DNS fetcher is used unchanged.
+ */
+export function createSourceFetcher(proxyUrl?: string | null): Fetcher {
+  if (proxyUrl === undefined || proxyUrl === null || proxyUrl === "") {
+    return safePublicFetch;
+  }
+  const dispatcher = new ProxyAgent(proxyUrl);
+  return (input, init) =>
+    undiciFetch(input, { ...init, dispatcher } as never) as unknown as Promise<Response>;
+}
+
+/**
+ * The proxy Musement should route source fetches through: an explicit
+ * configuration value first, then the conventional proxy environment variables.
+ */
+export function resolveProxyUrl(
+  configuredProxyUrl: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  return (
+    configuredProxyUrl ??
+    env.HTTPS_PROXY ??
+    env.https_proxy ??
+    env.ALL_PROXY ??
+    env.all_proxy ??
+    null
+  );
 }
 
 function safeLookup(
@@ -316,6 +390,8 @@ function createCollectedMaterial(input: {
   content: string;
   provenance: string[];
   referencedUrls: string[];
+  format?: MaterialFormat;
+  durationMinutes?: number | null;
 }): CollectedMaterial {
   const fingerprint = createHash("sha256").update(input.url).digest("hex");
   return {
@@ -325,10 +401,12 @@ function createCollectedMaterial(input: {
     url: input.url,
     author: input.author,
     publishedAt: input.publishedAt,
-    format: "article",
+    format: input.format ?? "article",
     summary: input.content.slice(0, 500),
     content: input.content,
-    estimatedMinutes: Math.max(1, Math.ceil(wordCount(input.content) / 220)),
+    estimatedMinutes:
+      input.durationMinutes ??
+      Math.max(1, Math.ceil(wordCount(input.content) / 220)),
     source: { id: input.source.id, name: input.source.name },
     provenance: input.provenance,
     referencedUrls: input.referencedUrls,
@@ -383,7 +461,14 @@ function parseXmlFeed(
   const rssItems = arrayOfRecords(rssChannel?.item);
   const atomFeed = asRecord(document.feed);
   const atomItems = arrayOfRecords(atomFeed?.entry);
-  const items = rssItems.length > 0 ? rssItems : atomItems;
+  // RSS 1.0 keeps its items beside the channel rather than inside it.
+  const rdfItems = arrayOfRecords(asRecord(document["rdf:RDF"])?.item);
+  const items =
+    rssItems.length > 0
+      ? rssItems
+      : atomItems.length > 0
+        ? atomItems
+        : rdfItems;
 
   return items.flatMap((item) => {
     const title = textValue(item.title);
@@ -391,40 +476,88 @@ function parseXmlFeed(
     if (title === null || url === null || !isPublicHttpUrl(url)) {
       return [];
     }
+    const mediaGroup = asRecord(item["media:group"]);
     const rawContent =
       textValue(item["content:encoded"]) ??
       textValue(item.content) ??
       textValue(item.description) ??
       textValue(item.summary) ??
+      textValue(mediaGroup?.["media:description"]) ??
       "";
     const content = htmlToText(rawContent);
     const author =
-      textValue(item.author) ?? textValue(item["dc:creator"]) ?? null;
+      textValue(item.author) ??
+      textValue(item["dc:creator"]) ??
+      textValue(asRecord(item["media:credit"])?.["#text"]) ??
+      null;
     const publishedAt = normalizedDate(
       textValue(item.pubDate) ??
         textValue(item.published) ??
-        textValue(item.updated),
+        textValue(item.updated) ??
+        textValue(item["dc:date"]) ??
+        textValue(item["prism:publicationDate"]),
     );
 
-    const fingerprint = createHash("sha256").update(url).digest("hex");
     return [
-      {
-        id: fingerprint,
-        fingerprint,
+      createCollectedMaterial({
+        source,
         title,
         url,
         author,
         publishedAt,
-        format: "article" as const,
-        summary: content.slice(0, 500),
         content,
-        estimatedMinutes: Math.max(1, Math.ceil(wordCount(content) / 220)),
-        source: { id: source.id, name: source.name },
         provenance: [source.url, url],
         referencedUrls: linksFromHtml(rawContent, url),
-      },
+        format: feedItemFormat(item, mediaGroup),
+        durationMinutes: declaredDurationMinutes(item),
+      }),
     ];
   });
+}
+
+/**
+ * Podcast and video Materials declare their real length; an Attention Budget
+ * cannot be reasoned about from the word count of a show-note blurb.
+ */
+function declaredDurationMinutes(item: Record<string, unknown>): number | null {
+  const declared = textValue(item["itunes:duration"]);
+  if (declared === null) {
+    return null;
+  }
+  const seconds = declared.includes(":")
+    ? declared
+        .split(":")
+        .map(Number)
+        .reduce(
+          (total, part) =>
+            total === null || !Number.isFinite(part) ? null : total * 60 + part,
+          0 as number | null,
+        )
+    : Number(declared);
+  if (seconds === null || !Number.isFinite(seconds) || seconds <= 0) {
+    return null;
+  }
+  return Math.max(1, Math.round(seconds / 60));
+}
+
+function feedItemFormat(
+  item: Record<string, unknown>,
+  mediaGroup: Record<string, unknown> | null,
+): MaterialFormat {
+  if (item["yt:videoId"] !== undefined) {
+    return "video";
+  }
+  const enclosureType =
+    textValue(asRecord(item.enclosure)?.["@_type"]) ??
+    textValue(asRecord(mediaGroup?.["media:content"])?.["@_type"]) ??
+    "";
+  if (enclosureType.startsWith("audio/")) {
+    return "podcast";
+  }
+  if (enclosureType.startsWith("video/")) {
+    return "video";
+  }
+  return mediaGroup === null ? "article" : "video";
 }
 
 function feedItemUrl(item: Record<string, unknown>): string | null {

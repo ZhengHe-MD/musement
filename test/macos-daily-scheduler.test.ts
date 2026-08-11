@@ -42,7 +42,7 @@ describe("macOS Daily Edition scheduling", () => {
     expect(plist).toContain("<key>Hour</key><integer>8</integer>");
     expect(plist).toContain("<key>Minute</key><integer>30</integer>");
     expect(plist).toContain("<string>/opt/homebrew/bin/musement</string>");
-    expect(plist).toContain("<string>deliver</string>");
+    expect(plist).toContain("<string>collect</string>");
     expect(plist).toContain(`<string>${configPath}</string>`);
     expect(plist).toContain(`<string>${dataDirectory}</string>`);
     expect(commands.at(-1)).toEqual({

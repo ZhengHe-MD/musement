@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import { Command, Option } from "commander";
 
 import { AiEditionEditor } from "./application/ai-edition-editor.js";
+import { OnlinePullEditor } from "./application/online-pull-editor.js";
 import {
   DailyEmailDelivery,
   type DailyEmailDeliveryResult,
@@ -25,12 +26,24 @@ import type {
   NotUsefulReason,
   PreferenceProposal,
   SelectionSlotRole,
+  CuratedEncounter,
+  DurabilityTier,
 } from "./domain/contracts.js";
+import { DurabilityClassifier } from "./application/durability-classifier.js";
+import { GitHubRssPublisher } from "./infrastructure/github-rss-publisher.js";
 import {
   CodexAppServerProvider,
   type ProviderDiagnostics,
 } from "./infrastructure/codex-app-server-provider.js";
-import { PublicSourceCollector } from "./infrastructure/public-source-collector.js";
+import {
+  PublicSourceCollector,
+  createSourceFetcher,
+  resolveProxyUrl,
+} from "./infrastructure/public-source-collector.js";
+import {
+  TranscriptEnrichingCollector,
+  YouTubeTranscriptConnector,
+} from "./infrastructure/youtube-transcript-connector.js";
 import { RawMaterialCache } from "./infrastructure/raw-material-cache.js";
 import { authorizeGmailSelfDelivery } from "./infrastructure/gmail-oauth.js";
 import { GmailApiSelfSender } from "./infrastructure/gmail-sender.js";
@@ -55,6 +68,7 @@ export interface Runtime {
   musement: Musement;
   configuration?: MusementConfiguration;
   providerDiagnostics?: () => Promise<ProviderDiagnostics>;
+  probeSources?: () => Promise<import("./domain/contracts.js").SourceProbeResult[]>;
   close(): void;
 }
 
@@ -280,8 +294,30 @@ export async function runCli(
   program
     .command("doctor")
     .description("Inspect provider authentication and rate-limit state")
-    .action(async () => {
+    .option("--probe", "Probe configured sources")
+    .action(async (options: { probe?: boolean }) => {
       const runtime = await runtimeForCommand();
+      
+      if (options.probe) {
+        if (runtime.probeSources === undefined) {
+          throw new Error("Source probing is not available in this runtime.");
+        }
+        const results = await runtime.probeSources();
+        let hasError = false;
+        for (const result of results) {
+          if (result.status === "ok") {
+            dependencies.stdout(`✓ ${result.sourceName}: OK (${result.itemCount} items, ${result.durationMs}ms)\n`);
+          } else {
+            dependencies.stdout(`✗ ${result.sourceName}: FAILED (${result.error})\n`);
+            hasError = true;
+          }
+        }
+        if (hasError) {
+          process.exitCode = 1;
+        }
+        return;
+      }
+
       if (runtime.providerDiagnostics === undefined) {
         throw new Error("Provider diagnostics are unavailable.");
       }
@@ -303,6 +339,193 @@ export async function runCli(
   ).action(todayAction);
 
   program
+    .command("collect")
+    .description(
+      "Collect candidate materials from sources, sync remote exposures, and update RSS feeds",
+    )
+    .option("--no-sync", "skip syncing remote exposures from GitHub repository")
+    .action(async (options: { sync?: boolean }) => {
+      const runtime = await runtimeForCommand();
+      const result = await runtime.musement.collect({
+        syncRemote: options.sync !== false,
+      });
+      dependencies.stdout(
+        `Collection complete: ${result.collectedCount} candidate materials processed, ${result.remoteExposuresSynced} remote exposures synced.\n`,
+      );
+    });
+
+  const pullCommand = program
+    .command("pull [query]")
+    .description(
+      "Curate an on-demand encounter of discoveries matching a question or topic",
+    )
+    .option(
+      "-n, --count <number>",
+      "number of discoveries to select (default: 3)",
+      (v) => parseInteger(v),
+      3,
+    )
+    .option("-d, --direction <string>", "dynamic curiosity direction / topic")
+    .option(
+      "-t, --tier <tier>",
+      "filter candidates by durability tier (evergreen, emerging, horizon)",
+    );
+  addEditionOutputOptions(pullCommand).action(
+    async (
+      query: string | undefined,
+      options: {
+        count: number;
+        direction?: string;
+        tier?: string;
+        html?: boolean;
+        json?: boolean;
+      },
+    ) => {
+      const runtime = await runtimeForCommand();
+      const direction = query ?? options.direction;
+      const durabilityTier = options.tier as DurabilityTier | undefined;
+      const encounter = await runtime.musement.pullCurated({
+        count: options.count,
+        ...(direction !== undefined ? { direction } : {}),
+        ...(durabilityTier !== undefined ? { durabilityTier } : {}),
+      });
+      dependencies.stdout(
+        options.html
+          ? formatCuratedEncounterAsHtml(encounter)
+          : options.json
+          ? `${JSON.stringify(encounter, null, 2)}\n`
+          : formatCuratedEncounter(encounter),
+      );
+    },
+  );
+
+  const poolCommand = program
+    .command("pool")
+    .description("Inspect candidate pool materials and sources");
+
+  poolCommand
+    .command("summary", { isDefault: true })
+    .description("Show summary of candidate pool by data source")
+    .action(async () => {
+      const runtime = await runtimeForCommand();
+      const summary = runtime.musement.getPoolSummary();
+      if (summary.length === 0) {
+        dependencies.stdout(
+          "Candidate pool is empty. Run `musement collect` to gather materials.\n",
+        );
+        return;
+      }
+      const lines = ["Candidate Pool Summary:", ""];
+      for (const s of summary) {
+        lines.push(
+          `• [${s.sourceId}] ${s.sourceName}: ${s.unexposedItems} unexposed / ${s.totalItems} total`,
+        );
+      }
+      dependencies.stdout(`${lines.join("\n")}\n`);
+    });
+
+  poolCommand
+    .command("list")
+    .description("List unexposed candidate materials")
+    .option("-s, --source <id>", "filter by source id")
+    .option(
+      "-t, --tier <tier>",
+      "filter by durability tier (evergreen, emerging, horizon)",
+    )
+    .action(async (options: { source?: string; tier?: string }) => {
+      const runtime = await runtimeForCommand();
+      const items = runtime.musement.browsePool({
+        sourceId: options.source,
+        durabilityTier: options.tier as DurabilityTier | undefined,
+      });
+      if (items.length === 0) {
+        dependencies.stdout("No unexposed candidate materials found.\n");
+        return;
+      }
+      const lines = [`Unexposed Candidate Materials (${items.length}):`, ""];
+      for (const item of items) {
+        const tierBadge = item.durabilityTier
+          ? `[${item.durabilityTier.toUpperCase()}]`
+          : "[EMERGING]";
+        lines.push(
+          `• [${item.fingerprint}] ${tierBadge} [${item.sourceName}] ${item.title}`,
+          `  ${item.url}`,
+          `  Time: ${item.estimatedMinutes} min | Format: ${item.format}`,
+          "",
+        );
+      }
+      dependencies.stdout(`${lines.join("\n")}\n`);
+    });
+
+  poolCommand
+    .command("mark-read [fingerprints...]")
+    .description(
+      "Mark specific candidate materials or an entire source as read/exposed",
+    )
+    .option(
+      "-s, --source <id>",
+      "mark all unexposed materials from source as read",
+    )
+    .action(async (fingerprints: string[], options: { source?: string }) => {
+      const runtime = await runtimeForCommand();
+      if (options.source) {
+        await runtime.musement.markSourceRead(options.source);
+        dependencies.stdout(
+          `Marked all unexposed materials from source "${options.source}" as read.\n`,
+        );
+      } else if (fingerprints.length > 0) {
+        for (const fp of fingerprints) {
+          await runtime.musement.markPoolItemRead(fp);
+        }
+        dependencies.stdout(
+          `Marked ${fingerprints.length} material(s) as read.\n`,
+        );
+      } else {
+        dependencies.stdout(
+          "Please specify one or more fingerprints or use --source <id> to mark as read.\n",
+        );
+      }
+    });
+
+  poolCommand
+    .command("reclassify")
+    .description(
+      "Re-evaluate durability tiers for all candidate pool materials and update feeds",
+    )
+    .action(async () => {
+      const runtime = await runtimeForCommand();
+      dependencies.stdout("Re-evaluating durability tiers for candidate pool materials...\n");
+      const result = await runtime.musement.reclassifyPool();
+      dependencies.stdout(
+        `Successfully classified and updated ${result.reclassifiedCount} candidate materials across Evergreen, Emerging, and Horizon tiers.\n`,
+      );
+    });
+
+  const feedsCommand = program
+    .command("feeds")
+    .description("Manage RSS feeds export to GitHub Pages");
+
+  feedsCommand
+    .command("publish")
+    .description(
+      "Export curated encounters and candidate pool feeds to GitHub Pages repository",
+    )
+    .action(async () => {
+      const runtime = await runtimeForCommand();
+      const result = await runtime.musement.publishFeeds();
+      if (result === null) {
+        dependencies.stdout(
+          "GitHub Pages export is not configured in config.yaml.\n",
+        );
+        return;
+      }
+      dependencies.stdout(
+        `Published RSS feeds:\n  Curated: ${result.curatedXmlPath}\n  Pool: ${result.poolXmlPath}\n`,
+      );
+    });
+
+
+  program
     .command("attempts")
     .description("Inspect Generation Attempts for a local date")
     .argument("[date]", "local date in YYYY-MM-DD")
@@ -311,6 +534,17 @@ export async function runCli(
       const localDate = date ?? currentLocalDate(runtime.configuration?.timezone);
       dependencies.stdout(
         `${JSON.stringify(runtime.musement.generationAttempts(localDate), null, 2)}\n`,
+      );
+    });
+
+  program
+    .command("candidates")
+    .description("Display candidate snapshot for a local date")
+    .argument("<date>", "local date in YYYY-MM-DD")
+    .action(async (date: string) => {
+      const runtime = await runtimeForCommand();
+      dependencies.stdout(
+        `${JSON.stringify(runtime.musement.candidateSnapshot(date), null, 2)}\n`,
       );
     });
 
@@ -536,22 +770,40 @@ export async function createProductionRuntime(options: {
     directory: resolve(options.dataDirectory, "raw-material-cache"),
     defaultRetentionDays: configuration.cache_retention_days,
   });
-  const collector = new PublicSourceCollector(undefined, cache);
+  const fetcher = createSourceFetcher(
+    resolveProxyUrl(configuration.network?.proxy_url),
+  );
+  const publicCollector = new PublicSourceCollector(fetcher, cache);
+  const collector = new TranscriptEnrichingCollector(
+    publicCollector,
+    new YouTubeTranscriptConnector(store, fetcher),
+  );
   const provider = new CodexAppServerProvider({
     timeoutMs: configuration.provider_timeout_seconds * 1_000,
   });
   const editor = new AiEditionEditor({ configuration, collector, provider });
+  const pullEditor = new OnlinePullEditor({ configuration, provider });
+  const classifier = new DurabilityClassifier({ provider });
+  const rssPublisher = configuration.github_pages
+    ? new GitHubRssPublisher(configuration.github_pages)
+    : undefined;
   const musement = new Musement({
     store,
     editor,
     clock: { now: () => new Date() },
     timezone: configuration.timezone,
     interestProfile: new YamlInterestProfileUpdater(options.configPath),
+    collector,
+    pullEditor,
+    classifier,
+    ...(rssPublisher !== undefined ? { rssPublisher } : {}),
+    configuration,
   });
   return {
     musement,
     configuration,
     providerDiagnostics: () => provider.diagnostics(),
+    probeSources: () => publicCollector.probe(configuration.sources),
     close: () => store.close(),
   };
 }
@@ -618,7 +870,11 @@ export function formatDailyEdition(edition: DailyEdition): string {
   for (const slot of edition.slots) {
     const heading = slot.role.replace("-", " ").toUpperCase();
     if (slot.status === "unavailable") {
-      lines.push(`${heading} — unavailable`, slot.reason, "");
+      lines.push(`${heading} — unavailable`, slot.reason);
+      if (slot.degradationCause) {
+        lines.push(`Cause: ${slot.degradationCause} (Evaluated ${slot.candidatesEvaluated ?? 0} candidates)`);
+      }
+      lines.push("");
       continue;
     }
     const discovery = slot.discovery;
@@ -644,6 +900,197 @@ export function formatDailyEdition(edition: DailyEdition): string {
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
+}
+
+export function formatCuratedEncounter(encounter: CuratedEncounter): string {
+  const lines = [
+    `Musement Curated Encounter — ${new Date(encounter.pulledAt).toLocaleString()}`,
+    encounter.direction ? `Direction: "${encounter.direction}"` : "Direction: Open Exploration",
+    `Selected: ${encounter.count} Discovery/Discoveries`,
+    "",
+  ];
+  if (encounter.discoveries.length === 0) {
+    lines.push("No candidates met the quality and relevance floor.");
+    return `${lines.join("\n")}\n`;
+  }
+  for (let i = 0; i < encounter.discoveries.length; i++) {
+    const discovery = encounter.discoveries[i]!;
+    const material = discovery.recommendedMaterial;
+    lines.push(
+      `[${i + 1}] ${discovery.title}`,
+      discovery.summary,
+      `Why: ${discovery.slotReason}`,
+      `Evidence Status: ${discovery.evidenceStatus}`,
+      `${material.author} · ${material.source} · ${material.format}`,
+      material.url,
+      `Time: ${material.meaningfulEntryMinutes} min entry · ${material.fullLengthMinutes === null ? "unknown" : `${material.fullLengthMinutes} min`} full`,
+    );
+    if (material.meaningfulEntry !== undefined) {
+      lines.push(`Start with: ${material.meaningfulEntry}`);
+    }
+    if (material.uncertainty !== undefined) {
+      lines.push(`Uncertainty: ${material.uncertainty}`);
+    }
+    lines.push("");
+  }
+  return `${lines.join("\n")}\n`;
+}
+
+export function formatCuratedEncounterAsHtml(encounter: CuratedEncounter): string {
+  const discoveriesHtml = encounter.discoveries
+    .map((discovery, idx) => {
+      const material = discovery.recommendedMaterial;
+      return `
+      <article class="encounter-card">
+        <div class="encounter-header">
+          <span class="encounter-num">#${idx + 1}</span>
+          <span class="encounter-badge">${escapeHtml(discovery.evidenceStatus)}</span>
+        </div>
+        <h2 class="encounter-title"><a href="${escapeHtml(material.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(discovery.title)}</a></h2>
+        <p class="encounter-summary">${escapeHtml(discovery.summary)}</p>
+        <blockquote class="encounter-reason"><strong>Why selected:</strong> ${escapeHtml(discovery.slotReason)}</blockquote>
+        <div class="encounter-meta">
+          <span><strong>Source:</strong> ${escapeHtml(material.source)} (${escapeHtml(material.format)})</span>
+          <span><strong>Author:</strong> ${escapeHtml(material.author)}</span>
+          <span><strong>Read time:</strong> ${material.meaningfulEntryMinutes} min entry</span>
+        </div>
+      </article>`;
+    })
+    .join("\n");
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Musement Curated Encounter</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --accent: #2563eb;
+      --border: #e2e8f0;
+      --quote-bg: #f1f5f9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0f19;
+        --card-bg: #131b2e;
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --accent: #38bdf8;
+        --border: #1e293b;
+        --quote-bg: #1e293b;
+      }
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      margin: 0;
+      padding: 2rem 1rem;
+    }
+    .container {
+      max-width: 760px;
+      margin: 0 auto;
+    }
+    header {
+      margin-bottom: 2.5rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 1.5rem;
+    }
+    h1 { margin: 0 0 0.5rem 0; font-size: 1.8rem; font-weight: 700; }
+    .direction-badge {
+      display: inline-block;
+      padding: 0.25rem 0.75rem;
+      background-color: var(--accent);
+      color: #ffffff;
+      border-radius: 9999px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-top: 0.5rem;
+    }
+    .encounter-card {
+      background-color: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.75rem;
+      margin-bottom: 2rem;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+    .encounter-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.75rem;
+    }
+    .encounter-num {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .encounter-badge {
+      font-size: 0.8rem;
+      color: var(--muted);
+    }
+    .encounter-title {
+      font-size: 1.35rem;
+      margin: 0 0 0.75rem 0;
+    }
+    .encounter-title a {
+      color: var(--text);
+      text-decoration: none;
+    }
+    .encounter-title a:hover {
+      color: var(--accent);
+      text-decoration: underline;
+    }
+    .encounter-summary { margin: 0 0 1rem 0; }
+    .encounter-reason {
+      margin: 1rem 0;
+      padding: 0.75rem 1rem;
+      background-color: var(--quote-bg);
+      border-left: 4px solid var(--accent);
+      border-radius: 4px;
+      font-size: 0.95rem;
+    }
+    .encounter-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-top: 1rem;
+      padding-top: 0.75rem;
+      border-top: 1px dashed var(--border);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Musement Curated Encounter</h1>
+      <p style="color: var(--muted); margin: 0;">Pulled: ${new Date(encounter.pulledAt).toLocaleString()}</p>
+      ${encounter.direction ? `<span class="direction-badge">${escapeHtml(encounter.direction)}</span>` : ""}
+    </header>
+    <main>
+      ${discoveriesHtml || "<p>No discoveries met the quality floor for this pull.</p>"}
+    </main>
+  </div>
+</body>
+</html>`;
+}
+
+function escapeHtml(unsafe: string): string {
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
 function addEditionOutputOptions(command: Command): Command {

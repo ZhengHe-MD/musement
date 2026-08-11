@@ -76,6 +76,8 @@ export interface UnavailableSelectionSlot {
   role: SelectionSlotRole;
   status: "unavailable";
   reason: string;
+  degradationCause?: "quality-floor" | "source-poverty";
+  candidatesEvaluated?: number;
 }
 
 export type SelectionSlot = FilledSelectionSlot | UnavailableSelectionSlot;
@@ -98,6 +100,8 @@ export interface GenerationTokenUsage {
 
 export interface SelectionTrace {
   candidates: unknown[];
+  /** Fingerprints of the candidates actually placed before the editor. */
+  enlistedFingerprints?: string[];
   assessments?: unknown[];
   shortlists?: unknown[];
   decisions: string[];
@@ -108,12 +112,24 @@ export interface DailyEditionDraft {
   localDate: string;
   slots: SelectionSlot[];
   trace: SelectionTrace;
+  generationMetrics?: GenerationMetrics;
 }
 
 export interface DailyEdition extends DailyEditionDraft {
   id: string;
   generatedAt: string;
   status: "complete" | "degraded";
+  editionQuality?: "normal" | "low-signal-day" | "source-gap";
+}
+
+export interface GenerationMetrics {
+  collectionDurationMs: number;
+  candidatesCollected: number;
+  candidatesEligible: number;
+  candidatesEnlisted: number;
+  aiGenerationDurationMs: number;
+  broadened: boolean;
+  broadeningDurationMs?: number;
 }
 
 export interface GenerationAttempt {
@@ -123,6 +139,7 @@ export interface GenerationAttempt {
   startedAt: string;
   finishedAt: string | null;
   failureReason: string | null;
+  metrics?: GenerationMetrics;
 }
 
 export interface DiscoverySelectedEvent {
@@ -230,7 +247,18 @@ export interface GenerateEditionRequest {
   localDate: string;
   excludedDiscoveryIds: string[];
   priorExposures: ExposureEvidence[];
+  priorEnlistments: EnlistmentEvidence[];
   feedbackEvidence: FeedbackEvidence[];
+}
+
+/**
+ * A Material that has already been placed before the editor as a candidate,
+ * whether or not it was selected. Enlistment bounds one edition's candidate
+ * sample; it is not Exposure and never removes a Discovery from eligibility.
+ */
+export interface EnlistmentEvidence {
+  fingerprint: string;
+  lastEnlistedAt: string;
 }
 
 export interface ExposureEvidence {
@@ -249,16 +277,121 @@ export interface FeedbackEvidence {
   reason: NotUsefulReason | null;
 }
 
+export interface SourceProbeResult {
+  sourceId: string;
+  sourceName: string;
+  status: "ok" | "failed";
+  itemCount: number;
+  durationMs: number;
+  error?: string;
+}
+
+export interface CandidateSnapshot {
+  fingerprint: string;
+  sourceId: string;
+  sourceName: string;
+  title: string;
+  url: string;
+  author: string | null;
+  publishedAt: string | null;
+  fetchedAt: string;
+  estimatedMinutes: number;
+  contentLength: number;
+  eligible: boolean;
+  ruleOutcomes: string[];
+}
+
 export interface EditionEditor {
   generate(request: GenerateEditionRequest): Promise<DailyEditionDraft>;
+}
+
+export const durabilityTiers = [
+  "evergreen",
+  "emerging",
+  "horizon",
+] as const;
+
+export type DurabilityTier = (typeof durabilityTiers)[number];
+
+export interface CandidatePoolItem {
+  fingerprint: string;
+  sourceId: string;
+  sourceName: string;
+  title: string;
+  url: string;
+  author: string | null;
+  publishedAt: string | null;
+  fetchedAt: string;
+  summary: string;
+  content: string;
+  estimatedMinutes: number;
+  format: MaterialFormat;
+  durabilityTier: DurabilityTier;
+  provenance: string[];
+  referencedUrls: string[];
+  isExposed: boolean;
+  exposedAt: string | null;
+}
+
+export interface CandidatePoolSourceSummary {
+  sourceId: string;
+  sourceName: string;
+  totalItems: number;
+  unexposedItems: number;
+}
+
+export interface CuratedPullRequest {
+  count: number;
+  direction?: string | undefined;
+  durabilityTier?: DurabilityTier | undefined;
+  excludedDiscoveryIds?: string[] | undefined;
+}
+
+export interface CuratedEncounter {
+  id: string;
+  pulledAt: string;
+  direction: string | null;
+  count: number;
+  discoveries: SelectedDiscovery[];
+  trace: SelectionTrace;
 }
 
 export interface EditionStore {
   findEdition(localDate: string): DailyEdition | null;
   listExposedDiscoveryIds(): string[];
   listExposureEvidence(): ExposureEvidence[];
+  listEnlistmentEvidence(): EnlistmentEvidence[];
+  recordEnlistments(fingerprints: string[], enlistedAt: string): void;
   listFeedbackEvidence(): FeedbackEvidence[];
   saveCanonicalEdition(edition: DailyEdition): DailyEdition;
+  saveCandidateSnapshot(localDate: string, candidates: CandidateSnapshot[]): void;
+  loadCandidateSnapshot(localDate: string): CandidateSnapshot[];
+  savePoolMaterials(materials: CandidatePoolItem[]): void;
+  listUnexposedPoolMaterials(
+    sourceId?: string,
+    durabilityTier?: DurabilityTier,
+  ): CandidatePoolItem[];
+  listAllPoolMaterials(
+    sourceId?: string,
+    durabilityTier?: DurabilityTier,
+  ): CandidatePoolItem[];
+  searchUnexposedPoolMaterials(
+    keywords: string[],
+    options?: {
+      limit?: number;
+      durabilityTier?: DurabilityTier;
+      sourceId?: string;
+    },
+  ): CandidatePoolItem[];
+  updateMaterialDurabilityTier(
+    fingerprint: string,
+    durabilityTier: DurabilityTier,
+  ): void;
+  markPoolMaterialsExposed(fingerprints: string[], exposedAt: string): void;
+  markSourceExposed(sourceId: string, exposedAt: string): void;
+  listPoolSourcesSummary(): CandidatePoolSourceSummary[];
+  saveCuratedEncounter(encounter: CuratedEncounter): void;
+  listCuratedEncounters(): CuratedEncounter[];
   beginGenerationAttempt(attempt: GenerationAttempt): void;
   finishGenerationAttempt(
     attemptId: string,
@@ -291,3 +424,4 @@ export interface EditionStore {
 export interface Clock {
   now(): Date;
 }
+

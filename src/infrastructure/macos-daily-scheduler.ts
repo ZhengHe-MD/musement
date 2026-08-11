@@ -89,7 +89,7 @@ function launchAgentPlist(options: {
     options.configPath,
     "--data-dir",
     options.dataDirectory,
-    "deliver",
+    "collect",
   ];
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -109,8 +109,8 @@ function launchAgentPlist(options: {
     <key>HOME</key><string>${xmlEscape(options.homeDirectory)}</string>
     <key>PATH</key><string>${xmlEscape(`${options.homeDirectory}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin`)}</string>
   </dict>
-  <key>StandardOutPath</key><string>${xmlEscape(resolve(options.logDirectory, "daily-delivery.log"))}</string>
-  <key>StandardErrorPath</key><string>${xmlEscape(resolve(options.logDirectory, "daily-delivery.error.log"))}</string>
+  <key>StandardOutPath</key><string>${xmlEscape(resolve(options.logDirectory, "daily-collection.log"))}</string>
+  <key>StandardErrorPath</key><string>${xmlEscape(resolve(options.logDirectory, "daily-collection.error.log"))}</string>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
 </dict>
