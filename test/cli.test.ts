@@ -169,7 +169,7 @@ describe("Musement CLI", () => {
           install: async (options) => {
             installs.push(options);
             return {
-              plistPath: "/tmp/com.musement.daily.plist",
+              plistPath: "/tmp/com.musement.daily-delivery.plist",
               logDirectory: "/tmp/musement-logs",
             };
           },
