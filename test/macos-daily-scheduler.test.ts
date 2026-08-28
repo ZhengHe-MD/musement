@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -15,8 +15,8 @@ afterEach(async () => {
   );
 });
 
-describe("macOS Daily Edition scheduling", () => {
-  it("installs a user LaunchAgent at the requested local time", async () => {
+describe("macOS Daily Edition delivery scheduling", () => {
+  it("installs a dedicated delivery LaunchAgent at the requested local time", async () => {
     const homeDirectory = await mkdtemp(join(tmpdir(), "musement-launchd-"));
     temporaryDirectories.push(homeDirectory);
     const commands: Array<{ file: string; arguments_: string[] }> = [];
@@ -41,10 +41,21 @@ describe("macOS Daily Edition scheduling", () => {
     const plist = await readFile(result.plistPath, "utf8");
     expect(plist).toContain("<key>Hour</key><integer>8</integer>");
     expect(plist).toContain("<key>Minute</key><integer>30</integer>");
+    expect(plist).toContain(
+      "<key>Label</key><string>com.musement.daily-delivery</string>",
+    );
     expect(plist).toContain("<string>/opt/homebrew/bin/musement</string>");
-    expect(plist).toContain("<string>collect</string>");
+    expect(plist).toContain("<string>deliver</string>");
+    expect(plist).toContain("daily-delivery.log");
+    expect(plist).toContain("daily-delivery.error.log");
     expect(plist).toContain(`<string>${configPath}</string>`);
     expect(plist).toContain(`<string>${dataDirectory}</string>`);
+    expect(result.plistPath).toBe(
+      join(
+        homeDirectory,
+        "Library/LaunchAgents/com.musement.daily-delivery.plist",
+      ),
+    );
     expect(commands.at(-1)).toEqual({
       file: "/bin/launchctl",
       arguments_: ["bootstrap", "gui/501", result.plistPath],
@@ -94,5 +105,50 @@ describe("macOS Daily Edition scheduling", () => {
     });
 
     await expect(scheduler.status()).resolves.toBe("installed-but-not-loaded");
+  });
+
+  it("removes only the daily delivery agent and leaves collection untouched", async () => {
+    const homeDirectory = await mkdtemp(join(tmpdir(), "musement-launchd-"));
+    temporaryDirectories.push(homeDirectory);
+    const launchAgentsDirectory = join(homeDirectory, "Library/LaunchAgents");
+    await mkdir(launchAgentsDirectory, { recursive: true });
+    const collectionPlistPath = join(
+      launchAgentsDirectory,
+      "com.musement.daily.plist",
+    );
+    const deliveryPlistPath = join(
+      launchAgentsDirectory,
+      "com.musement.daily-delivery.plist",
+    );
+    await writeFile(collectionPlistPath, "collection");
+    await writeFile(deliveryPlistPath, "delivery");
+    const commands: Array<{ file: string; arguments_: string[] }> = [];
+    const scheduler = new MacOsDailyScheduler({
+      homeDirectory,
+      userId: 501,
+      executablePath: "/opt/homebrew/bin/musement",
+      run: async (file, arguments_) => {
+        commands.push({ file, arguments_ });
+      },
+    });
+
+    await scheduler.remove();
+
+    await expect(readFile(collectionPlistPath, "utf8")).resolves.toBe(
+      "collection",
+    );
+    await expect(readFile(deliveryPlistPath, "utf8")).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    expect(commands).toEqual([
+      {
+        file: "/bin/launchctl",
+        arguments_: [
+          "bootout",
+          "--wait",
+          "gui/501/com.musement.daily-delivery",
+        ],
+      },
+    ]);
   });
 });
